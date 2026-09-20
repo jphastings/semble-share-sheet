@@ -77,7 +77,7 @@ public final class KeychainSessionStore: SessionStore, Sendable {
     /// The attributes that identify our one item.
     private func baseQuery() -> [String: Any] {
         var query: [String: Any] = [
-            kSecClass as String: kSecAttrGenericPassword,
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
