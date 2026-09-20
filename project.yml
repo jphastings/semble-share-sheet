@@ -1,0 +1,137 @@
+# XcodeGen spec for "Add to Semble". Regenerate the project with `xcodegen generate`;
+# the .xcodeproj is not committed. Info.plists are generated from the `info:`
+# blocks below so nothing binary or hand-edited lives in the repo.
+name: SembleShare
+
+options:
+  bundleIdPrefix: me.byjp
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  SembleKit:
+    path: Packages/SembleKit
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # Strict concurrency stays on inside SembleKit (see its Package.swift); the
+    # UI targets use `minimal` so SwiftUI/UIKit bridging doesn't drown real
+    # warnings.
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: 1.0.0
+    CURRENT_PROJECT_VERSION: 1
+    # Team is injected by CI (xcconfig / xcodebuild flags). Automatic signing
+    # with an empty team still allows `CODE_SIGNING_ALLOWED=NO` simulator builds.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  SembleShare:
+    type: application
+    platform: iOS
+    sources:
+      - SembleShare
+      - Shared
+    dependencies:
+      - package: SembleKit
+      - target: ShareExtension
+    entitlements:
+      path: SembleShare/SembleShare.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.me.byjp.SembleShare
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)me.byjp.SembleShare
+    info:
+      path: SembleShare/Info.plist
+      properties:
+        CFBundleDisplayName: Add to Semble
+        LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # The OAuth redirect URI is `io.github.jphastings:/oauth/callback`.
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: me.byjp.SembleShare.oauth
+            CFBundleURLSchemes:
+              - io.github.jphastings
+        # Read at runtime by AppEnvironment to compose the shared Keychain
+        # access group ("<TEAMID>.me.byjp.SembleShare"). Empty when unsigned.
+        AppIdentifierPrefix: $(AppIdentifierPrefix)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.byjp.SembleShare
+        PRODUCT_NAME: SembleShare
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - ShareExtension
+      - Shared
+    dependencies:
+      - package: SembleKit
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.me.byjp.SembleShare
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)me.byjp.SembleShare
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Add to Semble
+        AppIdentifierPrefix: $(AppIdentifierPrefix)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          # The Swift class is `ShareViewController` in module `ShareExtension`;
+          # no `@objc(...)` rename, so the module-qualified name is the runtime name.
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.byjp.SembleShare.ShareExtension
+        PRODUCT_NAME: ShareExtension
+        SKIP_INSTALL: YES
+
+schemes:
+  SembleShare:
+    build:
+      targets:
+        SembleShare: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - package: SembleKit/SembleKitTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+      revealArchiveInOrganizer: false
