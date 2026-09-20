@@ -1,0 +1,142 @@
+name: Release to TestFlight
+
+# Builds a signed App Store archive and uploads it to TestFlight.
+# Runs for every v* tag, or by hand from the Actions tab.
+# Secrets and variables are documented in docs/RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Profile *names* (as shown in the Apple Developer portal). Repository
+      # variables are the natural home; secrets work too.
+      APP_PROFILE_NAME: ${{ vars.APP_PROFILE_NAME || secrets.APP_PROFILE_NAME }}
+      EXTENSION_PROFILE_NAME: ${{ vars.EXTENSION_PROFILE_NAME || secrets.EXTENSION_PROFILE_NAME }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+    steps:
+      - name: Check required secrets and variables
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APP_PROVISION_PROFILE_BASE64: ${{ secrets.APP_PROVISION_PROFILE_BASE64 }}
+          EXTENSION_PROVISION_PROFILE_BASE64: ${{ secrets.EXTENSION_PROVISION_PROFILE_BASE64 }}
+        run: |
+          missing=0
+          for name in APPLE_TEAM_ID BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD \
+                      APP_PROVISION_PROFILE_BASE64 EXTENSION_PROVISION_PROFILE_BASE64 \
+                      APP_PROFILE_NAME EXTENSION_PROFILE_NAME \
+                      APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing secret or variable: $name (see docs/RELEASING.md)"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more required secrets/variables are not set. Nothing was built."
+            exit 1
+          fi
+          echo "All required secrets and variables are present."
+
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Set up Ruby and fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      # Follows GitHub's documented approach for signing on a hosted macOS
+      # runner: decode the certificate and profiles from secrets into a
+      # temporary keychain that is deleted at the end of the job.
+      # https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/xcode
+      - name: Install Apple certificate and provisioning profiles
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APP_PROVISION_PROFILE_BASE64: ${{ secrets.APP_PROVISION_PROFILE_BASE64 }}
+          EXTENSION_PROVISION_PROFILE_BASE64: ${{ secrets.EXTENSION_PROVISION_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          CERTIFICATE_PATH="$RUNNER_TEMP/distribution.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # Xcode 16 reads profiles from the second directory; older tooling
+          # (and some fastlane helpers) from the first. Install to both, named
+          # by UUID as Xcode itself does.
+          LEGACY_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          XCODE_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$LEGACY_DIR" "$XCODE_DIR"
+          install_profile() {
+            local tmp="$RUNNER_TEMP/$1.mobileprovision"
+            echo -n "$2" | base64 --decode -o "$tmp"
+            local uuid name
+            security cms -D -i "$tmp" > "$tmp.plist"
+            uuid=$(plutil -extract UUID raw -o - "$tmp.plist")
+            name=$(plutil -extract Name raw -o - "$tmp.plist")
+            cp "$tmp" "$LEGACY_DIR/$uuid.mobileprovision"
+            cp "$tmp" "$XCODE_DIR/$uuid.mobileprovision"
+            echo "Installed profile '$name' ($uuid)"
+          }
+          install_profile app "$APP_PROVISION_PROFILE_BASE64"
+          install_profile extension "$EXTENSION_PROVISION_PROFILE_BASE64"
+
+      - name: Build and upload to TestFlight
+        env:
+          # GITHUB_RUN_NUMBER becomes CURRENT_PROJECT_VERSION (the build number).
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+        run: bundle exec fastlane ios beta
+
+      - name: Upload build artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-build-${{ github.run_number }}
+          path: |
+            fastlane/builds/*.ipa
+            fastlane/builds/*.dSYM.zip
+            fastlane/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Remove temporary keychain and profiles
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" || true
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision \
+                "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/"*.mobileprovision \
+                "$RUNNER_TEMP"/*.mobileprovision "$RUNNER_TEMP"/*.plist "$RUNNER_TEMP"/distribution.p12

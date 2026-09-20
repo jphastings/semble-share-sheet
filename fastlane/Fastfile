@@ -1,0 +1,100 @@
+# fastlane lanes for Add to Semble.
+#
+#   bundle exec fastlane ios test   - run SembleKit's unit tests
+#   bundle exec fastlane ios beta   - build a signed archive and upload to TestFlight
+#
+# `beta` expects the signing certificate and provisioning profiles to be
+# installed already (release.yml does this) and the environment variables
+# listed in docs/RELEASING.md to be set. Actions run with the repository root
+# as the working directory; `sh` runs inside fastlane/, hence the `..` below.
+
+default_platform(:ios)
+
+PROJECT = "SembleShare.xcodeproj"
+SCHEME = "SembleShare"
+APP_BUNDLE_ID = "me.byjp.SembleShare"
+EXTENSION_BUNDLE_ID = "me.byjp.SembleShare.ShareExtension"
+
+platform :ios do
+  desc "Run the SembleKit unit tests (the same command CI uses)"
+  lane :test do
+    sh("swift", "test", "--package-path", "../Packages/SembleKit", "--parallel")
+  end
+
+  desc "Build a signed App Store archive and upload it to TestFlight"
+  lane :beta do
+    team_id = ENV.fetch("APPLE_TEAM_ID") { UI.user_error!("APPLE_TEAM_ID is not set") }
+    app_profile = ENV.fetch("APP_PROFILE_NAME") { UI.user_error!("APP_PROFILE_NAME is not set") }
+    extension_profile = ENV.fetch("EXTENSION_PROFILE_NAME") { UI.user_error!("EXTENSION_PROFILE_NAME is not set") }
+
+    # The build number must increase with every upload. GitHub's run number
+    # does exactly that; locally, fall back to a timestamp.
+    build_number = ENV.fetch("GITHUB_RUN_NUMBER") { Time.now.utc.strftime("%Y%m%d%H%M") }
+    UI.message("Build number: #{build_number}")
+
+    # The .xcodeproj is not committed; regenerate it from project.yml.
+    sh("cd .. && xcodegen generate")
+
+    # Manual signing, one call per target because each needs its own profile.
+    # (PROVISIONING_PROFILE_SPECIFIER cannot differ per target from the
+    # command line, so it is written into the project instead.)
+    update_code_signing_settings(
+      path: PROJECT,
+      targets: ["SembleShare"],
+      use_automatic_signing: false,
+      team_id: team_id,
+      code_sign_identity: "Apple Distribution",
+      bundle_identifier: APP_BUNDLE_ID,
+      profile_name: app_profile
+    )
+    update_code_signing_settings(
+      path: PROJECT,
+      targets: ["ShareExtension"],
+      use_automatic_signing: false,
+      team_id: team_id,
+      code_sign_identity: "Apple Distribution",
+      bundle_identifier: EXTENSION_BUNDLE_ID,
+      profile_name: extension_profile
+    )
+
+    build_app(
+      project: PROJECT,
+      scheme: SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      xcargs: "CURRENT_PROJECT_VERSION=#{build_number}",
+      export_options: {
+        signingStyle: "manual",
+        teamID: team_id,
+        signingCertificate: "Apple Distribution",
+        provisioningProfiles: {
+          APP_BUNDLE_ID => app_profile,
+          EXTENSION_BUNDLE_ID => extension_profile,
+        },
+        uploadSymbols: true,
+      },
+      output_directory: "fastlane/builds",
+      output_name: "SembleShare.ipa",
+      include_symbols: true
+    )
+
+    # Authenticate to App Store Connect with an API key rather than an Apple
+    # ID, so no 2FA prompt can ever block CI.
+    app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_API_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_API_ISSUER_ID"),
+      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY_BASE64"),
+      is_key_content_base64: true,
+      in_house: false
+    )
+
+    upload_to_testflight(
+      app_identifier: APP_BUNDLE_ID,
+      # Processing takes several minutes; the build appears in TestFlight
+      # on its own, so do not hold the runner for it.
+      skip_waiting_for_build_processing: true
+    )
+
+    UI.success("Uploaded build #{build_number} to TestFlight")
+  end
+end

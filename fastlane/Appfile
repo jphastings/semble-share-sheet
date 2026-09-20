@@ -1,0 +1,7 @@
+# Shared configuration for every lane. See docs/RELEASING.md.
+
+app_identifier("me.byjp.SembleShare")
+
+# Apple Developer Team ID (10 characters). Set APPLE_TEAM_ID in the
+# environment; in CI it comes from a repository secret.
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"]

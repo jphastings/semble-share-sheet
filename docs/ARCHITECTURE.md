@@ -188,3 +188,7 @@ bsky.social", not "HTTP 502").
 - Tests assert on behaviour and intent ("a refresh persists the rotated
   refresh token", "a PAR rejected with `use_dpop_nonce` is retried once with
   the nonce"), not on exact byte layouts.
+
+## Related docs
+
+[SETUP.md](SETUP.md) (one-time setup for a fork or maintainer) · [RELEASING.md](RELEASING.md) (TestFlight via GitHub Actions) · [Design/README.md](../Design/README.md) (icon source and licence)

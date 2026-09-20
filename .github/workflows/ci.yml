@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]   # tag pushes are handled by release.yml
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package-tests:
+    name: SembleKit tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache SwiftPM build directory
+        uses: actions/cache@v4
+        with:
+          path: Packages/SembleKit/.build
+          key: ${{ runner.os }}-sembleskit-${{ hashFiles('Packages/SembleKit/Package.swift', 'Packages/SembleKit/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-sembleskit-
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Run tests
+        run: swift test --package-path Packages/SembleKit --parallel
+
+  app-build:
+    name: Build app (iOS Simulator)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen and xcbeautify
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project SembleShare.xcodeproj \
+            -scheme SembleShare \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | xcbeautify

@@ -1,0 +1,43 @@
+name: Publish website
+
+# Deploys web/ to GitHub Pages. The site hosts the OAuth client metadata
+# document that is the app's client_id, so it must be live before anyone
+# can sign in. See docs/SETUP.md for the one-time repository settings.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate client metadata
+        run: python3 -m json.tool web/client-metadata.json > /dev/null
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

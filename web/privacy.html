@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy — Add to Semble</title>
+  <link rel="icon" href="icon.png" type="image/png">
+  <style>
+    :root { --orange: #FF6400; --cream: #FFF1E2; --ink: #1C1917; --muted: #6B625B; --rule: rgba(28, 25, 23, 0.12); }
+    * { box-sizing: border-box; }
+    html { background: var(--cream); }
+    body {
+      margin: 0; color: var(--ink); background: var(--cream);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+    }
+    main { max-width: 620px; margin: 0 auto; padding: 64px 20px 48px; }
+    h1 { font-size: 30px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 6px; }
+    h2 { font-size: 20px; letter-spacing: -0.01em; margin: 36px 0 10px; }
+    p { margin: 0 0 14px; }
+    ul { padding-left: 22px; margin: 0 0 14px; }
+    li { margin-bottom: 8px; }
+    a { color: var(--orange); text-decoration: none; }
+    a:hover, a:focus { text-decoration: underline; }
+    code { font-size: 0.92em; }
+    .note { color: var(--muted); font-size: 15px; }
+    footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Privacy notice</h1>
+    <p class="note">Add to Semble · last updated September 2026</p>
+
+    <p>
+      Add to Semble is a small, open-source iOS app. It has no server of its
+      own, no analytics, and no accounts. The developer collects no data
+      about you at all. Here is exactly what the app does with your
+      information.
+    </p>
+
+    <h2>What is stored on your device</h2>
+    <ul>
+      <li>
+        After you sign in, the OAuth tokens for your AT Protocol account
+        (and the DPoP key that protects them) are stored in the iOS
+        <strong>Keychain</strong> on your device, in a keychain group shared
+        only between the app and its share extension. They never leave the
+        device except to authenticate requests to your own PDS.
+      </li>
+      <li>
+        Signing out deletes them. Deleting the app deletes them.
+      </li>
+    </ul>
+
+    <h2>Who the app talks to</h2>
+    <p>The app connects to these services and no others:</p>
+    <ul>
+      <li>
+        <strong>Your own PDS and its authorisation server</strong> — for sign-in
+        and for writing the records you save. Which servers these are depends on
+        the account you sign in with (for most people, Bluesky's).
+      </li>
+      <li>
+        <strong><code>plc.directory</code> and <code>public.api.bsky.app</code></strong> —
+        to turn the handle or DID you type at sign-in into the address of your
+        PDS. These are public, unauthenticated look-ups.
+      </li>
+      <li>
+        <strong><code>api.semble.so</code></strong> — the share sheet asks
+        Semble's public <code>network.cosmik.card.getUrlMetadata</code>
+        endpoint for a title, description and image so it can show a preview
+        of the link you are saving. This request is unauthenticated and
+        carries only the URL being shared. No other request is ever made to
+        Semble's servers.
+      </li>
+    </ul>
+
+    <h2>What is published</h2>
+    <p>
+      Everything you save (the link, any note, and which collections it goes
+      in) is written as records to your AT Protocol repository. Those records
+      are public on the network in the same way they would be if you had
+      saved them through Semble's own apps. The app writes only to the
+      <code>network.cosmik.*</code> collections that the
+      <code>network.cosmik.authFull</code> permission set allows.
+    </p>
+
+    <h2>What is not collected</h2>
+    <ul>
+      <li>No analytics, crash reporting or telemetry of any kind.</li>
+      <li>No advertising identifiers.</li>
+      <li>Nothing is sent to the developer.</li>
+    </ul>
+
+    <h2>Questions</h2>
+    <p>
+      The source code is at
+      <a href="https://github.com/jphastings/semble-share-sheet">github.com/jphastings/semble-share-sheet</a>;
+      you can verify all of the above there, or open an issue if something
+      is unclear.
+    </p>
+
+    <footer>
+      <a href="./">Add to Semble</a> · An independent, unofficial app; not affiliated with Cosmik Network.
+    </footer>
+  </main>
+</body>
+</html>
