@@ -125,6 +125,72 @@ final class SembleLibraryTests: XCTestCase {
         XCTAssertTrue(store.writes.isEmpty)
     }
 
+    func testSaveRejectsAnOverlongNoteBeforeWritingAnything() async {
+        let store = FakeRecordStore()
+        let library = makeLibrary(store: store)
+        let tooLong = String(repeating: "a", count: 10_001)
+
+        do {
+            _ = try await library.save(SaveRequest(url: link, note: tooLong))
+            XCTFail("expected an error")
+        } catch let error as SembleLibraryError {
+            XCTAssertEqual(error, .noteTooLong)
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+        XCTAssertTrue(store.writes.isEmpty)
+    }
+
+    // MARK: - save retry
+
+    func testRetryAfterANoteFailureWritesExactlyOneCardAndOneNote() async throws {
+        let store = FakeRecordStore()
+        store.createError = FakeRecordStore.Failure.injected
+        store.createErrorAtCall = 2 // the card succeeds; the note fails
+        let library = makeLibrary(store: store)
+        let request = SaveRequest(url: link, note: "Worth a re-read")
+
+        do {
+            _ = try await library.save(request)
+            XCTFail("expected the note write to fail")
+        } catch {}
+
+        let result = try await library.save(request)
+
+        XCTAssertEqual(store.writes.map(\.collection), ["network.cosmik.card", "network.cosmik.card"])
+        XCTAssertEqual(result.card, StrongRef(uri: "at://did:plc:test/network.cosmik.card/1", cid: "bafy1"))
+        XCTAssertEqual(result.note?.uri, "at://did:plc:test/network.cosmik.card/2")
+    }
+
+    func testRetryAfterASecondLinkFailureLinksEachCollectionOnce() async throws {
+        let store = FakeRecordStore()
+        store.createError = FakeRecordStore.Failure.injected
+        store.createErrorAtCall = 3 // the card and first link succeed; the second link fails
+        let library = makeLibrary(store: store)
+        let reading = StrongRef(uri: "at://did:plc:alice/network.cosmik.collection/a", cid: "bafya")
+        let recipes = StrongRef(uri: "at://did:plc:alice/network.cosmik.collection/b", cid: "bafyb")
+        let request = SaveRequest(url: link, collections: [reading, recipes])
+
+        do {
+            _ = try await library.save(request)
+            XCTFail("expected the second link write to fail")
+        } catch {}
+
+        let result = try await library.save(request)
+
+        XCTAssertEqual(store.writes.map(\.collection), [
+            "network.cosmik.card",
+            "network.cosmik.collectionLink",
+            "network.cosmik.collectionLink",
+        ])
+        XCTAssertEqual(result.collectionLinks.count, 2)
+        let linkedCollectionURIs = store.writtenRecords(in: "network.cosmik.collectionLink").map {
+            ($0.json["collection"] as? [String: Any])?["uri"] as? String
+        }
+        XCTAssertEqual(linkedCollectionURIs, [reading.uri, recipes.uri], "each collection is linked exactly once")
+    }
+
     func testSavePropagatesStoreErrorsUnchanged() async {
         let store = FakeRecordStore()
         store.createError = FakeRecordStore.Failure.injected
