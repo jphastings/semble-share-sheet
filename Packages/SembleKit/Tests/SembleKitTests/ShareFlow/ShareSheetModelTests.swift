@@ -46,11 +46,23 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertTrue(model.canSave)
     }
 
+    /// `load()` deliberately doesn't wait for the preview — it must never
+    /// delay the form — so a test that asserts on the preview waits for the
+    /// fetch to finish first.
+    private func awaitPreviewFetch(on model: ShareSheetModel) async {
+        var spins = 0
+        while model.isLoadingPreview, spins < 1000 {
+            spins += 1
+            await Task.yield()
+        }
+    }
+
     func testSuccessfulLoadExposesPreviewAndCollections() async {
         let library = FakeLibrary(collections: [Self.collection("Reading"), Self.collection("Recipes")])
         let model = ShareSheetModel(library: library, metadata: Self.previewLoader(title: "An article"), url: url)
 
         await model.load()
+        await awaitPreviewFetch(on: model)
 
         XCTAssertEqual(model.phase, .ready)
         XCTAssertEqual(model.preview?.title, "An article")
@@ -151,6 +163,7 @@ final class ShareSheetModelTests: XCTestCase {
         let library = FakeLibrary(collections: [reading, recipes])
         let model = ShareSheetModel(library: library, metadata: Self.previewLoader(title: "An article"), url: url)
         await model.load()
+        await awaitPreviewFetch(on: model)
 
         model.toggle(recipes)
         model.note = "  worth a second read \n"
