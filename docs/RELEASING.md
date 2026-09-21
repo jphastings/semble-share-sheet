@@ -1,22 +1,41 @@
 # Releasing to TestFlight
 
-`.github/workflows/release.yml` builds a signed App Store archive and uploads
-it to TestFlight. It runs on every tag matching `v*`, or by hand from the
-**Actions** tab (**Release to TestFlight → Run workflow**).
+Releases are driven by the change files described in
+[CONTRIBUTING.md](../CONTRIBUTING.md). Nothing here needs running by hand.
 
-```sh
-git tag v1.0.0 && git push origin v1.0.0
-```
+1. Pull requests land on `main`, each carrying a change file if it changed
+   anything a user would notice.
+2. `prepare-release.yml` opens (or updates) a **chore: prepare release** pull
+   request. It writes `CHANGELOG.md` and bumps `MARKETING_VERSION` in
+   `project.yml`. It reopens on every push to `main`, so it always reflects
+   everything waiting to ship. With no change files pending, nothing happens.
+3. Merging that pull request is the release. `tag-release.yml` tags the
+   version, publishes a GitHub release, and then builds and uploads to
+   TestFlight.
+
+Review the release pull request as you would any other: the changelog it
+writes is what people will read.
+
+## Releasing by hand
+
+`release.yml` still runs for a `v*` tag pushed by hand, and from the
+**Actions** tab (**Release to TestFlight → Run workflow**) — useful for
+re-running a failed upload without cutting a new version.
 
 ## Versions
 
 | | Where it comes from | Example |
 | --- | --- | --- |
 | Build (`CFBundleVersion`) | The GitHub run number, so it always increases | `7` |
-| Version (`CFBundleShortVersionString`) | The tag, with the `v` dropped | `1.0.0` |
+| Version (`CFBundleShortVersionString`) | The tag, with the `v` dropped, else `MARKETING_VERSION` | `0.2.2` |
 
-Running the workflow by hand rather than from a tag keeps the
-`MARKETING_VERSION` in `project.yml`, because there is no tag to read.
+`MARKETING_VERSION` in `project.yml` is the version of record, and the release
+pull request is what changes it. A build with no version tag to read falls
+back to it, which is why a release build is correctly versioned whether it is
+started by the tag or called directly by `tag-release.yml`.
+
+While the version is below 1.0, a `major` change file bumps the minor number
+and a `minor` one bumps the patch — the usual pre-1.0 convention.
 
 Both values reach the app through the `CFBundleShortVersionString` and
 `CFBundleVersion` entries in each target's `info.properties` in

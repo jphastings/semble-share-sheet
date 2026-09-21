@@ -51,3 +51,31 @@ CI runs both on every push.
 - One logical change per pull request.
 - Explain *why* in the description; the diff already shows *what*.
 - CI must be green.
+- If the change is one a user of the app would notice, describe it in a change
+  file (below).
+
+## Change files
+
+A pull request that changes what someone using the app would notice adds a
+file to `.changeset/`. Write one with `knope document-change`, or by hand as
+`.changeset/anything.md`:
+
+```markdown
+---
+default: minor
+---
+
+Links carrying a query string now wait for you to ask before a preview is
+fetched.
+```
+
+`default` is this repo's one package. The level is `major`, `minor` or
+`patch`; while the version is below 1.0 these shift down one, so a `minor`
+change bumps the patch number. Write the text as a changelog entry — for
+someone deciding whether to update, not for a reviewer reading the diff.
+
+A pull request that changes nothing a user would notice (CI, tests, internal
+refactoring) needs no file.
+
+Merging to `main` opens a release pull request collecting these entries; see
+[docs/RELEASING.md](docs/RELEASING.md).

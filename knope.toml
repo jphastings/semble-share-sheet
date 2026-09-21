@@ -1,0 +1,50 @@
+# Release automation. See .changeset/README.md for how a change gets into a
+# release, and docs/RELEASING.md for what happens after the tag.
+#
+# `project.yml`'s MARKETING_VERSION is the version of record. The Fastfile
+# prefers a `v*` tag name and falls back to this value, so a build made from
+# the release commit is correctly versioned either way.
+
+[package]
+versioned_files = [{ path = "project.yml", regex = 'MARKETING_VERSION:\s+(?<version>\d+\.\d+\.\d+)' }]
+changelog = "CHANGELOG.md"
+
+[github]
+owner = "jphastings"
+repo = "semble-share-sheet"
+
+# Opens (or force-updates) the release PR. Run on every push to main.
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare release $version\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[workflows.steps.title]
+template = "chore: prepare release $version"
+
+[workflows.steps.body]
+template = "Merging this will tag $version and start a TestFlight build.\n\n$changelog"
+
+# Tags the release. Run when the release PR is merged.
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
