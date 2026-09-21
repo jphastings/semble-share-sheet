@@ -4,145 +4,74 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Add to Semble</title>
-  <meta name="description" content="An iOS share-sheet action that saves links straight to your Semble library, over the AT Protocol.">
+  <meta name="description" content="An iOS share sheet for Semble.">
   <link rel="icon" href="icon.png" type="image/png">
   <style>
     :root {
-      --orange: #FF6400;
-      --cream: #FFF1E2;
+      --bg: #FFF1E2;
       --ink: #1C1917;
       --muted: #6B625B;
-      --rule: rgba(28, 25, 23, 0.12);
+      --accent: #B14000;
     }
-    * { box-sizing: border-box; }
-    html { background: var(--cream); }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1C1917;
+        --ink: #FAFAF9;
+        --muted: #A8A29E;
+        --accent: #FE8537;
+      }
+    }
+    html { background: var(--bg); }
     body {
       margin: 0;
+      padding: 14vh 24px 48px;
       color: var(--ink);
-      background: var(--cream);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 17px;
-      line-height: 1.55;
+      background: var(--bg);
+      font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    main {
-      max-width: 620px;
-      margin: 0 auto;
-      padding: 64px 20px 48px;
-    }
-    header {
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      margin-bottom: 32px;
-    }
-    header img {
-      width: 96px;
-      height: 96px;
-      border-radius: 22px;
-      box-shadow: 0 1px 2px rgba(28, 25, 23, 0.10), 0 6px 20px rgba(255, 100, 0, 0.18);
-    }
+    main { max-width: 34rem; margin: 0 auto; }
+    img { width: 64px; height: 64px; border-radius: 15px; display: block; }
     h1 {
-      font-size: 34px;
-      line-height: 1.1;
+      font-size: 28px;
       letter-spacing: -0.02em;
-      margin: 0 0 6px;
+      margin: 20px 0 4px;
     }
-    .tagline { margin: 0; color: var(--muted); }
-    h2 {
-      font-size: 20px;
-      letter-spacing: -0.01em;
-      margin: 40px 0 10px;
-    }
-    p { margin: 0 0 14px; }
-    a { color: var(--orange); text-decoration: none; }
-    a:hover, a:focus { text-decoration: underline; }
-    ol { padding-left: 22px; margin: 0 0 14px; }
-    li { margin-bottom: 6px; }
-    .button {
-      display: inline-block;
-      padding: 12px 20px;
-      border-radius: 999px;
-      background: var(--orange);
-      color: #fff;
-      font-weight: 600;
-      margin: 6px 0 4px;
-    }
-    .button:hover, .button:focus { text-decoration: none; filter: brightness(0.94); }
-    .button[aria-disabled="true"] {
-      background: rgba(255, 100, 0, 0.18);
-      color: var(--orange);
-      cursor: default;
-    }
-    .note { color: var(--muted); font-size: 15px; }
+    p { margin: 0 0 1rem; }
+    .lead { font-size: 20px; margin-bottom: 2rem; }
+    a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
     footer {
-      margin-top: 56px;
-      padding-top: 20px;
-      border-top: 1px solid var(--rule);
+      margin-top: 2.5rem;
       color: var(--muted);
       font-size: 14px;
     }
-    footer p { margin: 0 0 8px; }
+    footer p { margin: 0 0 6px; }
   </style>
 </head>
 <body>
   <main>
-    <header>
-      <img src="icon.png" alt="" width="96" height="96">
-      <div>
-        <h1>Add to Semble</h1>
-        <p class="tagline">Save links to <a href="https://semble.so">Semble</a> from any app on your iPhone or iPad.</p>
-      </div>
-    </header>
+    <img src="icon.png" alt="" width="64" height="64">
+    <h1>Add to Semble</h1>
+    <p class="lead">An iOS share sheet for <a href="https://semble.so">Semble</a>.</p>
 
     <p>
-      Add to Semble puts an <strong>Add to Semble</strong> action in the iOS share
-      sheet. Share a page from Safari, a post from another app, or any URL,
-      pick a collection, add a note if you like, and it lands in your Semble
-      library a few seconds later.
+      Share a link to add it to your library. Choose a collection, write a
+      note, and the card appears on semble.so.
     </p>
-
-    <h2>How it works</h2>
-    <ol>
-      <li>Sign in once with your atmosphere account (Bluesky or any other AT Protocol PDS) using standard <a href="https://atproto.com/specs/oauth">ATProto OAuth</a>. The app never sees your password.</li>
-      <li>The share extension writes Semble’s own record types directly into your repository, using the same <code>network.cosmik.*</code> lexicons Semble’s browser extension uses.</li>
-      <li>Semble indexes those records from the network, so everything appears on semble.so as if you had saved it there.</li>
-    </ol>
-    <p class="note">
-      There is no middle-man server: your data goes from your device to your
-      own PDS. Read the <a href="privacy.html">privacy notice</a> for the full
-      list of who the app talks to.
-    </p>
-
-    <h2>Get it</h2>
     <p>
-      <a class="button" aria-disabled="true" role="link">TestFlight — coming soon</a>
+      The app signs in with your atmosphere account and writes to your own PDS.
     </p>
-    <p class="note">
-      A public TestFlight link will appear here once the first build is
-      through review. Until then you can build it yourself from source.
-    </p>
-
-    <h2>Open source</h2>
     <p>
-      The app is MIT licensed and developed in the open at
-      <a href="https://github.com/jphastings/semble-share-sheet">github.com/jphastings/semble-share-sheet</a>.
-      Bug reports and pull requests are welcome.
+      Message me on Bluesky for a TestFlight invitation. I am
+      <a href="https://bsky.app/profile/byjp.me">@byjp.me</a>.
     </p>
 
     <footer>
       <p>
-        An independent, unofficial app. “Semble” and the Semble logo belong to
-        <a href="https://cosmik.network">Cosmik Network</a> / Homeworld Collective;
-        the logo is reproduced under the MIT licence of
-        <a href="https://github.com/cosmik-network/extension-semble">extension-semble</a>.
+        <a href="https://github.com/jphastings/semble-share-sheet">Source</a> ·
+        <a href="privacy.html">Privacy</a>
       </p>
-      <p>
-        <a href="https://semble.so">Semble</a> ·
-        <a href="https://github.com/cosmik-network/semble">Semble source</a> ·
-        <a href="privacy.html">Privacy</a> ·
-        <a href="oauth-client-metadata.json">OAuth client metadata</a>
-      </p>
+      <p><a href="https://cosmik.network">Cosmik Network</a> makes Semble. This app is not official.</p>
     </footer>
   </main>
 </body>
