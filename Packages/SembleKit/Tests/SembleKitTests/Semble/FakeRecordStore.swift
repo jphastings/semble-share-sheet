@@ -45,8 +45,14 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
     private(set) var listCalls: [ListCall] = []
     /// Pages keyed by the cursor that requests them; the first page's key is `""`.
     private var pages: [String: CannedPage] = [:]
-    /// When set, every `createRecord` throws this instead of writing.
+    /// When set, `createRecord` throws this. Every call throws unless
+    /// `createErrorAtCall` narrows it to one specific attempt.
     var createError: Error?
+    /// 1-based `createRecord` call number (across the store's whole
+    /// lifetime, not per save) that should throw `createError`. `nil` (the
+    /// default) means every call throws.
+    var createErrorAtCall: Int?
+    private var createCallCount = 0
 
     init(did: String = "did:plc:test") {
         self.storedDID = did
@@ -61,7 +67,13 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
     }
 
     func createRecord<R: Encodable>(collection: String, record: R) async throws -> StrongRef {
-        if let createError { throw createError }
+        let callNumber = lock.withLock { () -> Int in
+            createCallCount += 1
+            return createCallCount
+        }
+        if let createError, createErrorAtCall == nil || createErrorAtCall == callNumber {
+            throw createError
+        }
         let data = try JSONEncoder().encode(record)
         return lock.withLock { () -> StrongRef in
             writes.append(Write(collection: collection, data: data))

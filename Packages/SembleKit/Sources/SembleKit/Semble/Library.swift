@@ -71,6 +71,9 @@ public enum SembleLibraryError: LocalizedError, Equatable {
     /// offered `mailto:`, `file:` and friends too.
     case unsupportedURL(URL)
     case emptyCollectionName
+    /// The note exceeds `network.cosmik.card`'s `noteContent.text` limit.
+    /// Checked before anything is written, so a save never strands a card.
+    case noteTooLong
 
     public var errorDescription: String? {
         switch self {
@@ -78,6 +81,8 @@ public enum SembleLibraryError: LocalizedError, Equatable {
             return "Semble can only save web links (http or https)."
         case .emptyCollectionName:
             return "Give the collection a name."
+        case .noteTooLong:
+            return "That note is too long to save — try trimming it."
         }
     }
 }
