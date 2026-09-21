@@ -64,6 +64,45 @@ public actor OAuthClient {
         )
     }
 
+    /// Revokes `session`'s refresh token at the authorization server, per
+    /// RFC 7009. Best effort: this never throws. A server with no
+    /// revocation endpoint, a network failure, or a non-2xx response are all
+    /// treated the same as success, since a failed sign-out here must never
+    /// stop the user signing out locally.
+    public func revoke(_ session: Session) async {
+        guard let refreshToken = session.login.refreshToken?.value else { return }
+        guard let issuerHost = URL(string: session.authorizationServer.issuer)?.hostName,
+              let endpoint = await revocationEndpoint(issuerHost: issuerHost)
+        else { return }
+        let request = HTTPRequest.form(url: endpoint, fields: [
+            "token": refreshToken,
+            "client_id": configuration.clientID.absoluteString,
+        ])
+        _ = try? await http.send(request.withTimeout(Self.revocationTimeout))
+    }
+
+    /// OAuthenticator's `ServerMetadata` doesn't decode `revocation_endpoint`,
+    /// so it's fetched separately from the same `.well-known` document.
+    private func revocationEndpoint(issuerHost: String) async -> URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = issuerHost
+        components.path = "/.well-known/oauth-authorization-server"
+        guard let url = components.url,
+              let response = try? await http.send(HTTPRequest(url: url, timeout: Self.revocationTimeout)),
+              response.isSuccess,
+              let metadata = try? response.decode(RevocationServerMetadata.self),
+              let endpoint = URL(string: metadata.revocationEndpoint),
+              // The refresh token is about to be POSTed here, so take the
+              // endpoint only if the document names an https one.
+              endpoint.scheme == "https"
+        else { return nil }
+        return endpoint
+    }
+
+    /// Sign-out waits on revocation, so it must not be able to hang.
+    private static let revocationTimeout: TimeInterval = 5
+
     /// Finds the authorization server for a PDS: the PDS's protected-resource
     /// document names it, and its own metadata document must agree that it
     /// is who we fetched it from.
@@ -107,5 +146,14 @@ extension URL {
     /// The host name, without the deprecation noise of `URL.host`.
     var hostName: String? {
         URLComponents(url: self, resolvingAgainstBaseURL: false)?.host
+    }
+}
+
+/// Just the one field OAuthenticator's `ServerMetadata` doesn't decode.
+private struct RevocationServerMetadata: Decodable {
+    let revocationEndpoint: String
+
+    enum CodingKeys: String, CodingKey {
+        case revocationEndpoint = "revocation_endpoint"
     }
 }

@@ -36,7 +36,7 @@ public actor PDSClient {
         // offline, so the clear is a no-op here and `perform` clears the
         // store only when the server says the refresh token is dead.
         let storage = LoginStorage(
-            retrieveLogin: { vault.current.login },
+            retrieveLogin: { vault.retrieveLogin() },
             storeLogin: { login in try vault.update(login: login) },
             clearLogin: {}
         )
@@ -128,9 +128,11 @@ public actor PDSClient {
             (data, urlResponse) = try await authenticator.response(for: request)
         } catch let error as AuthenticatorError {
             if case .invalidGrant = error {
-                // The authorization server has rejected the refresh token
-                // outright; nothing short of signing in again will help.
-                try? vault.clear()
+                // The authorization server has rejected a refresh token
+                // outright; nothing short of signing in again will help, but
+                // only for the token that was actually rejected (see
+                // `clearIfStillRejected`).
+                try? vault.clearIfStillRejected()
             }
             throw OAuthError.fromAuthenticator(error)
         }
@@ -191,6 +193,10 @@ final class SessionVault: @unchecked Sendable {
     private let lock = NSLock()
     private var session: Session
     private let store: SessionStore
+    /// The refresh token most recently handed to OAuthenticator. Set inside
+    /// `retrieveLogin`, so a later `invalidGrant` can tell whether the store
+    /// has since moved on to a different (newer) login.
+    private var offeredRefreshToken: String?
 
     init(session: Session, store: SessionStore) {
         self.session = session
@@ -199,6 +205,24 @@ final class SessionVault: @unchecked Sendable {
 
     var current: Session {
         lock.withLock { session }
+    }
+
+    /// The login to authenticate with. Two processes (the app and the share
+    /// extension, or two extension instances) share one Keychain item, so
+    /// the store may hold a newer login than the one this process last saw;
+    /// that's preferred whenever it's readable and for the same account. An
+    /// unreadable store, or one holding a different account, falls back to
+    /// the in-memory login.
+    func retrieveLogin() -> Login {
+        let login: Login
+        if let stored = try? store.load(), stored.did == current.did {
+            lock.withLock { session = stored }
+            login = stored.login
+        } else {
+            login = current.login
+        }
+        lock.withLock { offeredRefreshToken = login.refreshToken?.value }
+        return login
     }
 
     /// Records rotated tokens and persists the whole session.
@@ -211,7 +235,17 @@ final class SessionVault: @unchecked Sendable {
         try store.save(updated)
     }
 
-    func clear() throws {
+    /// The authorization server just rejected a refresh token. Clears the
+    /// store only if it still holds that exact token; if another process has
+    /// since saved a newer login there, that login is adopted into memory
+    /// instead of being destroyed by this process's stale view.
+    func clearIfStillRejected() throws {
+        let rejected = lock.withLock { offeredRefreshToken }
+        guard let stored = try? store.load() else { return }
+        guard stored.login.refreshToken?.value == rejected else {
+            lock.withLock { session = stored }
+            return
+        }
         try store.clear()
     }
 }

@@ -172,6 +172,46 @@ final class PDSClientTests: XCTestCase {
         XCTAssertNotNil(try? store.load(), "being offline is not a reason to log the user out")
     }
 
+    // MARK: - Shared Keychain item (app + extension)
+
+    func test_aSessionRotatedInTheStoreByAnotherProcessIsPickedUpRatherThanTheStaleInMemoryOne() async throws {
+        stub.on(Self.createRecord, json: Self.strongRefJSON)
+        let client = makeClient(session: session())
+        // Another process (the app, or another extension instance) refreshed
+        // and saved a newer session while this client still has the
+        // original in memory.
+        try store.save(Fixtures.session(accessToken: "access-9", refreshToken: "refresh-9", key: key))
+
+        _ = try await client.createRecord(collection: "app.example.record", record: TestRecord(text: "hi"))
+
+        let request = try XCTUnwrap(stub.requests(to: Self.createRecord).last)
+        XCTAssertEqual(authorization(of: request), "DPoP access-9")
+    }
+
+    func test_anInvalidGrantForAStaleTokenLeavesANewerStoredSessionIntact() async {
+        let store = self.store!
+        let newer = Fixtures.session(accessToken: "access-9", refreshToken: "refresh-9", key: key)
+        stub.on(Fixtures.tokenEndpoint) { _ in
+            // Another process rotates the session mid-flight: the refresh
+            // token this request carries (refresh-0) is now stale, and the
+            // server correctly rejects it.
+            try store.save(newer)
+            return HTTPResponse(
+                statusCode: 400,
+                headers: ["Content-Type": "application/json"],
+                body: Data(#"{"error": "invalid_grant", "error_description": "Refresh token expired"}"#.utf8)
+            )
+        }
+        let client = makeClient(session: session(expiry: Date().addingTimeInterval(-60)))
+
+        let error = await errorThrown { try await client.createRecord(collection: "app.example.record", record: TestRecord(text: "hi")) }
+        XCTAssertEqual(error as? OAuthError, .sessionExpired)
+        XCTAssertEqual((try? store.load())?.login.refreshToken?.value, "refresh-9", "the newer session saved by another process must survive a stale rejection")
+    }
+
+    // An invalid_grant for the CURRENT (not stale) refresh token still
+    // clears the store: see `test_aDeadRefreshTokenSurfacesAsSessionExpiredAndForgetsTheSession` above.
+
     // MARK: - Records
 
     func test_createRecordSendsTheRecordAndReturnsItsStrongRef() async throws {

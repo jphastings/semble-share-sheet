@@ -21,6 +21,14 @@ public struct HTTPRequest: Equatable, Sendable {
         self.timeout = timeout
     }
 
+    /// The same request with a timeout applied, for the `form` and `json`
+    /// factories, which don't take one.
+    public func withTimeout(_ timeout: TimeInterval) -> HTTPRequest {
+        var copy = self
+        copy.timeout = timeout
+        return copy
+    }
+
     /// A `POST` with an `application/x-www-form-urlencoded` body.
     public static func form(url: URL, fields: [String: String], headers: [String: String] = [:]) -> HTTPRequest {
         var allHeaders = headers

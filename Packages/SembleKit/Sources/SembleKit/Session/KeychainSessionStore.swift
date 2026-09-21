@@ -6,10 +6,10 @@ import Security
 /// encoded. The app and the share extension read the same item by using the
 /// same service name and an app-group access group.
 ///
-/// The item is `kSecAttrAccessibleAfterFirstUnlock` rather than the default
-/// `WhenUnlocked`: the share extension can be invoked while the device is
-/// locked-after-unlock (Siri, a locked-screen share from a notification) and
-/// must still be able to reach the tokens.
+/// The item is `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: the share
+/// extension only ever runs with UI, i.e. while the device is unlocked, so it
+/// needs no looser accessibility, and `ThisDeviceOnly` keeps the DPoP private
+/// key out of iCloud Keychain backup and device-to-device migration.
 public final class KeychainSessionStore: SessionStore, Sendable {
     private let service: String
     private let account: String
@@ -49,18 +49,24 @@ public final class KeychainSessionStore: SessionStore, Sendable {
     public func save(_ session: Session) throws {
         let data = try JSONEncoder().encode(session)
 
-        // Delete-then-add rather than update: it is one code path whether or
-        // not an item exists, and it guarantees the accessibility attribute
-        // is what this version of the app wants, even for an item written by
-        // an older version.
-        let deleteStatus = SecItemDelete(baseQuery() as CFDictionary)
-        guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
-            throw KeychainError(status: deleteStatus)
+        // Update first rather than delete-then-add: a delete followed by a
+        // failed add would lose the session (and the refresh token in it,
+        // already spent at the server) entirely. Updating also re-sets
+        // kSecAttrAccessible, which migrates an item an older app version
+        // wrote with a different accessibility.
+        let updateAttributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let updateStatus = SecItemUpdate(baseQuery() as CFDictionary, updateAttributes as CFDictionary)
+        guard updateStatus != errSecSuccess else { return }
+        guard updateStatus == errSecItemNotFound else {
+            throw KeychainError(status: updateStatus)
         }
 
         var attributes = baseQuery()
         attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let addStatus = SecItemAdd(attributes as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
             throw KeychainError(status: addStatus)
