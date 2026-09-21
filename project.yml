@@ -51,6 +51,11 @@ targets:
       path: SembleShare/Info.plist
       properties:
         CFBundleDisplayName: Add to Semble
+        # XcodeGen's generated Info.plist otherwise hard-codes "1.0" and "1",
+        # which silently ignores MARKETING_VERSION and CURRENT_PROJECT_VERSION
+        # and makes every upload collide on build 1.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
@@ -100,6 +105,9 @@ targets:
       path: ShareExtension/Info.plist
       properties:
         CFBundleDisplayName: Add to Semble
+        # Apple requires these to match the containing app exactly.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         AppIdentifierPrefix: $(AppIdentifierPrefix)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
