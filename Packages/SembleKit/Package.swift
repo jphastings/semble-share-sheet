@@ -16,8 +16,10 @@ let package = Package(
         // cache and the PAR/refresh fixes on main, so the commit is pinned
         // until the next release.
         .package(url: "https://github.com/ATProtoKit/OAuthenticator", revision: "b455b1259da75f056d1e24f8926227eaa13e1c7a"),
-        // JWT/JWK signing for the DPoP proofs.
-        .package(url: "https://github.com/ATProtoKit/Jot", from: "0.1.1"),
+        // JWT/JWK signing for the DPoP proofs. Exact, not `from:`: this key
+        // signs every DPoP proof, and a generated Xcode project resolves
+        // against its own Package.resolved, not the one committed here.
+        .package(url: "https://github.com/ATProtoKit/Jot", exact: "0.1.1"),
     ],
     targets: [
         .target(
