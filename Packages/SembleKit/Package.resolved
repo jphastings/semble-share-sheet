@@ -1,0 +1,23 @@
+{
+  "originHash" : "8b526ba042547701895e90c32d8444a774c9f2d8662b61cc4acf3d3004d499fb",
+  "pins" : [
+    {
+      "identity" : "jot",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ATProtoKit/Jot",
+      "state" : {
+        "revision" : "0826782b0489dc76249b5def7d69f38684e5cb7f",
+        "version" : "0.1.1"
+      }
+    },
+    {
+      "identity" : "oauthenticator",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ATProtoKit/OAuthenticator",
+      "state" : {
+        "revision" : "b455b1259da75f056d1e24f8926227eaa13e1c7a"
+      }
+    }
+  ],
+  "version" : 3
+}

@@ -18,7 +18,7 @@ EXTENSION_BUNDLE_ID = "me.byjp.SembleShare.ShareExtension"
 platform :ios do
   desc "Run the SembleKit unit tests (the same command CI uses)"
   lane :test do
-    sh("swift", "test", "--package-path", "../Packages/SembleKit", "--parallel")
+    sh("swift", "test", "--package-path", "../Packages/SembleKit", "--parallel", "--only-use-versions-from-resolved-file")
   end
 
   desc "Build a signed App Store archive and upload it to TestFlight"

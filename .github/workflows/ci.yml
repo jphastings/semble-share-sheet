@@ -36,7 +36,7 @@ jobs:
         run: swift --version
 
       - name: Run tests
-        run: swift test --package-path Packages/SembleKit --parallel
+        run: swift test --package-path Packages/SembleKit --parallel --only-use-versions-from-resolved-file
 
   app-build:
     name: Build app (iOS Simulator)
@@ -62,7 +62,6 @@ jobs:
             -project SembleShare.xcodeproj \
             -scheme SembleShare \
             -destination 'generic/platform=iOS Simulator' \
-            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             | xcbeautify
