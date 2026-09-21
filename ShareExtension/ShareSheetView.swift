@@ -124,7 +124,13 @@ struct ShareSheetView: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 16) {
-            URLPreviewCard(domain: model.domain, preview: model.preview)
+            URLPreviewCard(
+                domain: model.domain,
+                preview: model.preview,
+                previewAwaitingConfirmation: model.previewAwaitingConfirmation,
+                isLoadingPreview: model.isLoadingPreview,
+                onLoadPreview: model.loadPreview
+            )
 
             CollectionPickerView(model: model)
                 .disabled(model.phase == .saving)
@@ -194,10 +200,15 @@ struct ShareSheetView: View {
 // MARK: - URL preview
 
 /// The link being saved: domain, title, description and an optional thumbnail.
-/// Falls back to just the domain while (or if) metadata is unavailable.
+/// Falls back to just the domain while (or if) metadata is unavailable, and —
+/// for a URL that needs confirmation first — offers a small "Load preview"
+/// affordance in place of the thumbnail.
 struct URLPreviewCard: View {
     let domain: String?
     let preview: URLPreview?
+    let previewAwaitingConfirmation: Bool
+    let isLoadingPreview: Bool
+    let onLoadPreview: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -220,24 +231,31 @@ struct URLPreviewCard: View {
                 }
             }
             Spacer(minLength: 0)
-            if let imageURL = preview?.imageURL {
-                AsyncImage(url: imageURL) { phase in
-                    if let image = phase.image {
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        Color.sembleStone200
-                    }
-                }
-                .frame(width: 45, height: 45)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
+            trailing
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.sembleSurface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if let imageURL = preview?.imageURL {
+            RemoteThumbnailView(url: imageURL, side: 45)
+        } else if isLoadingPreview {
+            ProgressView()
+                .frame(width: 45, height: 45)
+        } else if previewAwaitingConfirmation {
+            Button(action: onLoadPreview) {
+                Label("Load preview", systemImage: "eye")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.sembleMutedText)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Load a preview for this link")
+        }
     }
 
     private var title: String {

@@ -10,12 +10,15 @@ public struct HTTPRequest: Equatable, Sendable {
     public var url: URL
     public var headers: [String: String]
     public var body: Data?
+    /// Overrides `URLSession`'s default 60s request timeout when set.
+    public var timeout: TimeInterval?
 
-    public init(method: String = "GET", url: URL, headers: [String: String] = [:], body: Data? = nil) {
+    public init(method: String = "GET", url: URL, headers: [String: String] = [:], body: Data? = nil, timeout: TimeInterval? = nil) {
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.timeout = timeout
     }
 
     /// A `POST` with an `application/x-www-form-urlencoded` body.
@@ -74,6 +77,9 @@ public struct URLSessionHTTPClient: HTTPClient {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
+        if let timeout = request.timeout {
+            urlRequest.timeoutInterval = timeout
+        }
         for (name, value) in request.headers {
             urlRequest.setValue(value, forHTTPHeaderField: name)
         }

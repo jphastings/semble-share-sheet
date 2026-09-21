@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import SembleKit
@@ -70,6 +71,76 @@ final class ShareSheetModelTests: XCTestCase {
         await model.retry()
         XCTAssertEqual(model.phase, .ready)
         XCTAssertEqual(model.collections.map(\.name), ["Reading"])
+    }
+
+    // MARK: Preview
+
+    func testAPlainURLLoadsItsPreviewAutomatically() async {
+        let library = FakeLibrary(collections: [Self.collection("Reading")])
+        let loader = CountingLoader(title: "An article")
+        let model = ShareSheetModel(library: library, metadata: loader.load, url: url)
+
+        await model.load()
+        let preview = await waitForPreview(model)
+
+        XCTAssertEqual(loader.callCount, 1)
+        XCTAssertEqual(preview?.title, "An article")
+        XCTAssertFalse(model.previewAwaitingConfirmation)
+    }
+
+    func testAURLWithAQueryWaitsForConfirmationBeforeLoadingItsPreview() async {
+        let sensitive = URL(string: "https://example.com/reset?token=secret")!
+        let library = FakeLibrary(collections: [Self.collection("Reading")])
+        let loader = CountingLoader(title: "An article")
+        let model = ShareSheetModel(library: library, metadata: loader.load, url: sensitive)
+
+        await model.load()
+
+        XCTAssertEqual(model.phase, .ready, "the URL is still ready to save without its preview")
+        XCTAssertTrue(model.previewAwaitingConfirmation)
+        XCTAssertEqual(loader.callCount, 0, "no request should be sent before the user asks")
+        XCTAssertNil(model.preview)
+
+        model.loadPreview()
+        let preview = await waitForPreview(model)
+
+        XCTAssertEqual(loader.callCount, 1)
+        XCTAssertEqual(preview?.title, "An article")
+        XCTAssertFalse(model.previewAwaitingConfirmation)
+    }
+
+    func testURLsWithAFragmentOrUserinfoAlsoWaitForConfirmation() async {
+        let library = FakeLibrary(collections: [])
+        let loader = CountingLoader()
+        for unsafe in [
+            URL(string: "https://example.com/article#section")!,
+            URL(string: "https://user:pass@example.com/article")!,
+        ] {
+            let model = ShareSheetModel(library: library, metadata: loader.load, url: unsafe)
+            await model.load()
+            XCTAssertTrue(model.previewAwaitingConfirmation, unsafe.absoluteString)
+        }
+        XCTAssertEqual(loader.callCount, 0)
+    }
+
+    func testASlowOrNeverReturningPreviewDoesNotDelayReady() async {
+        let library = FakeLibrary(collections: [Self.collection("Reading")])
+        let model = ShareSheetModel(
+            library: library,
+            metadata: { url in
+                try await Task.sleep(nanoseconds: 300_000_000)
+                return URLPreview(url: url, title: "Late")
+            },
+            url: url
+        )
+
+        await model.load()
+
+        XCTAssertEqual(model.phase, .ready, "ready shouldn't wait for the preview")
+        XCTAssertNil(model.preview)
+
+        let preview = await waitForPreview(model)
+        XCTAssertEqual(preview?.title, "Late")
     }
 
     // MARK: Saving
@@ -239,6 +310,18 @@ final class ShareSheetModelTests: XCTestCase {
             URLPreview(url: url, title: title, description: nil, siteName: nil, type: nil, imageURL: nil)
         }
     }
+
+    /// The preview is filled in by a detached `Task`, independently of
+    /// `load()`/`loadPreview()` returning; this waits for that to land.
+    @discardableResult
+    private func waitForPreview(_ model: ShareSheetModel, timeout: TimeInterval = 2) async -> URLPreview? {
+        if let preview = model.preview { return preview }
+        let arrived = expectation(description: "preview arrives")
+        let cancellable = model.$preview.dropFirst().sink { _ in arrived.fulfill() }
+        await fulfillment(of: [arrived], timeout: timeout)
+        cancellable.cancel()
+        return model.preview
+    }
 }
 
 // MARK: - Test doubles
@@ -299,4 +382,19 @@ private struct TestError: LocalizedError {
     }
 
     var errorDescription: String? { message }
+}
+
+/// A `MetadataLoader` that counts how many times it was asked for a preview.
+private final class CountingLoader: @unchecked Sendable {
+    private(set) var callCount = 0
+    private let title: String?
+
+    init(title: String? = nil) {
+        self.title = title
+    }
+
+    func load(_ url: URL) async throws -> URLPreview {
+        callCount += 1
+        return URLPreview(url: url, title: title)
+    }
 }
