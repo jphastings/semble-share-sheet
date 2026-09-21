@@ -15,6 +15,11 @@ on:
 
 permissions:
   contents: write
+  # release.yml is called from here, and a called workflow cannot hold
+  # permissions its caller lacks — without these two the whole workflow
+  # fails to start, before any job's `if` is even considered.
+  id-token: write
+  attestations: write
 
 concurrency:
   # Deliberately not "release": the TestFlight build this calls uses that
