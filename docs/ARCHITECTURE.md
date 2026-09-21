@@ -76,13 +76,31 @@ public struct URLSessionHTTPClient: HTTPClient
 ### Session
 
 ```swift
-public struct Session: Codable            // did, handle, pdsURL, authorizationServer, tokens, scope, dpopPrivateKey
+/// Everything the share extension needs to keep writing to the user's PDS.
+/// `ServerMetadata`, `Login` and `DPoPKey` are OAuthenticator's types; the
+/// authorization-server metadata is cached here so the extension never has
+/// to re-run discovery.
+public struct Session: Codable, Equatable, Sendable {
+    did: String; handle: String?; pdsURL: URL
+    authorizationServer: ServerMetadata
+    login: Login          // access + refresh tokens, expiry, granted scope
+    dpopKey: DPoPKey      // the P-256 key the tokens are bound to
+}
 public protocol SessionStore              // load() / save(_:) / clear()
 public final class InMemorySessionStore   // tests and previews
 public final class KeychainSessionStore   // init(service: String, accessGroup: String?)
 ```
 
 ### ATProto
+
+OAuth, DPoP and PKCE are delegated to
+[OAuthenticator](https://github.com/ATProtoKit/OAuthenticator) (its
+`Bluesky` service implements the ATProto flavour: PAR, DPoP-bound tokens,
+per-origin nonce retries, refresh) with
+[Jot](https://github.com/ATProtoKit/Jot) signing the DPoP proof JWTs.
+SembleKit adds only what those libraries leave to the app: resolving a
+handle to a DID and PDS, discovering the PDS's authorization server, the
+proof-JWT claims ATProto wants, and a thin XRPC wrapper.
 
 ```swift
 public struct StrongRef { uri, cid }
@@ -97,30 +115,40 @@ public struct IdentityResolver {
 
 public struct OAuthClientConfiguration { clientID: URL; redirectURI: URL; scope: String }
 
-/// Opaque, Codable state between opening the browser and receiving the callback.
-public struct PendingAuthorization: Codable { public let authorizationURL: URL /* + private state */ }
-
+/// Signs in: resolves the account, discovers its authorization server and
+/// runs OAuthenticator's Bluesky flow. `openBrowser` is handed the
+/// authorization URL and the callback scheme and returns the callback URL
+/// (in the app that is SwiftUI's `WebAuthenticationSession`).
 public actor OAuthClient {
     public init(configuration: OAuthClientConfiguration, http: HTTPClient = URLSessionHTTPClient())
-    public func beginAuthorization(account: String) async throws -> PendingAuthorization
-    public func completeAuthorization(_ pending: PendingAuthorization, callbackURL: URL) async throws -> Session
-    public func refresh(_ session: Session) async throws -> Session
+    public func signIn(account: String, openBrowser: @escaping Authenticator.UserAuthenticator) async throws -> Session
+}
+
+/// Builds OAuthenticator's `DPoPSigner.JWTGenerator` for a key: an ES256
+/// `dpop+jwt` carrying jti, iat, htm, htu and, when given, nonce and ath.
+public enum DPoPProofs {
+    public static func generator(for key: DPoPKey) -> DPoPSigner.JWTGenerator
 }
 
 public struct RecordEnvelope<Record: Decodable> { uri: String; cid: String; value: Record }
 public struct RecordPage<Record: Decodable> { records: [RecordEnvelope<Record>]; cursor: String? }
 
-/// Authenticated XRPC calls against the session's own PDS. Adds DPoP proofs,
-/// handles `use_dpop_nonce` retries, and refreshes an expired access token
-/// (persisting the new session to the store) transparently.
+/// Authenticated XRPC calls against the session's own PDS, made through an
+/// OAuthenticator `Authenticator` in manual-only mode: it adds the DPoP
+/// proof and `Authorization` header, retries on `use_dpop_nonce`, refreshes
+/// an expired access token and writes the rotated session back to the
+/// store. It never opens a browser; a dead refresh token surfaces as
+/// `OAuthError.sessionExpired` and the stored session is cleared.
 public actor PDSClient {
-    public init(session: Session, sessionStore: SessionStore, oauth: OAuthClient, http: HTTPClient = URLSessionHTTPClient())
+    public init(session: Session, sessionStore: SessionStore, configuration: OAuthClientConfiguration, http: HTTPClient = URLSessionHTTPClient())
     public var did: String { get async }
     public func createRecord<R: Encodable>(collection: String, record: R) async throws -> StrongRef
     public func listRecords<R: Decodable>(collection: String, limit: Int = 100, cursor: String? = nil) async throws -> RecordPage<R>
     public func getRecord<R: Decodable>(collection: String, rkey: String) async throws -> RecordEnvelope<R>
     public func deleteRecord(collection: String, rkey: String) async throws
 }
+
+public enum OAuthError: LocalizedError { sessionExpired, issuerMismatch, subjectMismatch, discoveryFailed(String) … }
 ```
 
 ### Semble
@@ -182,9 +210,11 @@ bsky.social", not "HTTP 502").
 
 - Swift 5 language mode with strict-concurrency warnings on; `Sendable` where
   it is natural, `actor` for anything holding mutable network state.
-- No third-party dependencies. `CryptoKit` provides ES256 (DPoP) and SHA-256
-  (PKCE). The share extension has a tight memory budget and every dependency
-  is something a reviewer has to audit.
+- Dependencies are kept to the security-sensitive parts we should not be
+  hand-rolling: OAuthenticator (OAuth 2.1 + DPoP) and Jot (JWT/JWK), both
+  from the ATProtoKit organisation, both dependency-free themselves. The
+  share extension has a tight memory budget and every dependency is
+  something a reviewer has to audit, so anything else stays in-tree.
 - Tests assert on behaviour and intent ("a refresh persists the rotated
   refresh token", "a PAR rejected with `use_dpop_nonce` is retried once with
   the nonce"), not on exact byte layouts.
