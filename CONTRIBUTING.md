@@ -26,6 +26,12 @@ focused changes are easiest to review.
   test that describes it.
 - Error messages shown to the user must make sense to a person.
 - British English in docs and UI copy.
+- Keep the website's prose short and plain. `web/` is checked against
+  Simplified Technical English with
+  [stuffbucket/vale](https://github.com/stuffbucket/vale): short sentences,
+  the active voice, no contractions. Its vocabulary rules come from an
+  aerospace wordset, so ignore the suggestions that rename product terms
+  ("note" to "record", "save" to "keep"); take the errors and warnings.
 
 ## Running the tests
 
