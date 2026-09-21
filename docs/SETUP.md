@@ -22,26 +22,33 @@ app's; iOS requires it.
 
 ATProto OAuth identifies a client by a URL that serves its metadata
 document, so the metadata has to be live before anyone can sign in.
-`web/client-metadata.json` is published to GitHub Pages by
-`.github/workflows/pages.yml`.
+`web/` is published to GitHub Pages by `.github/workflows/pages.yml` and
+served from the custom domain `semble-share.byjp.me`.
 
 1. In the repository settings, under **Pages**, set **Source** to
    **GitHub Actions** (not "Deploy from a branch"). The workflow will fail
    until this is done.
-2. Push to `main` (or run the workflow by hand). Check that
-   `https://<user>.github.io/<repo>/client-metadata.json` returns the JSON.
+2. At the DNS provider, add a `CNAME` record pointing `semble-share.byjp.me`
+   at `jphastings.github.io`. The `web/CNAME` file tells Pages which domain
+   to serve; once DNS has propagated, tick **Enforce HTTPS** in the Pages
+   settings (a client_id must be `https`).
+3. Push to `main` (or run the workflow by hand). Check that
+   `https://semble-share.byjp.me/oauth-client-metadata.json` returns the JSON.
 
-For a fork, edit `web/client-metadata.json`:
+See GitHub's guide to
+[managing a custom domain for GitHub Pages](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site).
 
-- `client_id`, `client_uri`, `logo_uri`, `policy_uri` become your Pages URLs.
+For a fork, edit `web/CNAME` (or delete it to use `<user>.github.io/<repo>`)
+and `web/oauth-client-metadata.json`:
+
+- `client_id`, `client_uri`, `logo_uri`, `policy_uri` become your URLs.
 - **The redirect scheme is derived from the `client_id` host.** The
   [ATProto OAuth spec](https://atproto.com/specs/oauth#clients) requires a
   native client's custom-scheme redirect URI to be the reverse-DNS form of
-  the client_id's domain: `jphastings.github.io` → `io.github.jphastings`,
-  so the redirect URI is `io.github.jphastings:/oauth/callback` (note the
+  the client_id's domain: `semble-share.byjp.me` → `me.byjp.semble-share`,
+  so the redirect URI is `me.byjp.semble-share:/oauth/callback` (note the
   single slash). Change `redirect_uris` here *and* the URL scheme registered
-  by the app in `project.yml` / `Info.plist`, plus wherever the Swift code
-  configures `OAuthClientConfiguration`.
+  by the app in `project.yml` / `Info.plist`, plus `Shared/AppEnvironment.swift`.
 
 `scope` must stay `atproto include:network.cosmik.authFull`; that is the
 permission set Semble publishes.

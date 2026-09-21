@@ -11,8 +11,8 @@ enum Fixtures {
     static let handle = "alice.example.com"
     static let pdsURL = URL(string: "https://pds.example")!
     static let issuer = URL(string: "https://auth.example")!
-    static let clientID = URL(string: "https://app.example/client-metadata.json")!
-    static let redirectURI = URL(string: "io.github.jphastings:/oauth/callback")!
+    static let clientID = URL(string: "https://app.example/oauth-client-metadata.json")!
+    static let redirectURI = URL(string: "me.byjp.semble-share:/oauth/callback")!
     static let scope = "atproto include:network.cosmik.authFull"
 
     static let configuration = OAuthClientConfiguration(clientID: clientID, redirectURI: redirectURI, scope: scope)

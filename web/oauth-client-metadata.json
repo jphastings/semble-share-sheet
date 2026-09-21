@@ -1,0 +1,14 @@
+{
+  "client_id": "https://semble-share.byjp.me/oauth-client-metadata.json",
+  "client_name": "Add to Semble",
+  "client_uri": "https://semble-share.byjp.me/",
+  "logo_uri": "https://semble-share.byjp.me/icon.png",
+  "policy_uri": "https://semble-share.byjp.me/privacy.html",
+  "redirect_uris": ["me.byjp.semble-share:/oauth/callback"],
+  "scope": "atproto include:network.cosmik.authFull",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "application_type": "native",
+  "token_endpoint_auth_method": "none",
+  "dpop_bound_access_tokens": true
+}

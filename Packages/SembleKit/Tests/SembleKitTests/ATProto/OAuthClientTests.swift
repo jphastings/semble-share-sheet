@@ -159,7 +159,7 @@ final class OAuthClientTests: XCTestCase {
     func test_completeAuthorizationSurfacesADeniedSignIn() async throws {
         stubHappyPath()
         let pending = try await client.beginAuthorization(account: Fixtures.handle)
-        let denied = URL(string: "io.github.jphastings:/oauth/callback?state=\(pending.state)&error=access_denied&error_description=User%20said%20no")!
+        let denied = URL(string: "me.byjp.semble-share:/oauth/callback?state=\(pending.state)&error=access_denied&error_description=User%20said%20no")!
 
         let error = await errorThrown { try await client.completeAuthorization(pending, callbackURL: denied) }
 

@@ -7,10 +7,10 @@ import Foundation
 /// that it is a public native app using DPoP). Servers fetch it on demand.
 public struct OAuthClientConfiguration: Equatable, Sendable {
     /// URL of the client metadata document, e.g.
-    /// `https://jphastings.github.io/semble-share-sheet/client-metadata.json`.
+    /// `https://semble-share.byjp.me/oauth-client-metadata.json`.
     public var clientID: URL
     /// Where the browser sends the user back to, e.g.
-    /// `io.github.jphastings:/oauth/callback`. Must be listed in the metadata
+    /// `me.byjp.semble-share:/oauth/callback`. Must be listed in the metadata
     /// document.
     public var redirectURI: URL
     /// Space-separated OAuth scopes. Must include `atproto`.

@@ -65,12 +65,12 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # The OAuth redirect URI is `io.github.jphastings:/oauth/callback`.
+        # The OAuth redirect URI is `me.byjp.semble-share:/oauth/callback`.
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
             CFBundleURLName: me.byjp.SembleShare.oauth
             CFBundleURLSchemes:
-              - io.github.jphastings
+              - me.byjp.semble-share
         # Read at runtime by AppEnvironment to compose the shared Keychain
         # access group ("<TEAMID>.me.byjp.SembleShare"). Empty when unsigned.
         AppIdentifierPrefix: $(AppIdentifierPrefix)

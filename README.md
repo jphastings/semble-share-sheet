@@ -39,7 +39,7 @@ Sign-in requests the scope `atproto include:network.cosmik.authFull`. The
 and grants write access to the `network.cosmik.*` collections and nothing
 else. The only Semble endpoint the app calls is the public, unauthenticated
 `network.cosmik.card.getUrlMetadata`, for link previews. The
-[privacy notice](https://jphastings.github.io/semble-share-sheet/privacy.html)
+[privacy notice](https://semble-share.byjp.me/privacy.html)
 lists every host the app contacts.
 
 ## Install
@@ -90,7 +90,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Maintainer docs:
 
 ## Licence
 
-[MIT](LICENSE) © 2026 JP Hastings.
+[MIT](LICENSE) © 2026 JP Hastings-Spital.
 
 ## Trademarks
 

@@ -20,13 +20,13 @@ enum AppEnvironment {
     // MARK: OAuth
 
     /// The hosted client metadata document doubles as the ATProto `client_id`.
-    static let oauthClientID = URL(string: "https://jphastings.github.io/semble-share-sheet/client-metadata.json")!
+    static let oauthClientID = URL(string: "https://semble-share.byjp.me/oauth-client-metadata.json")!
 
     /// Custom-scheme redirect registered in the app's `CFBundleURLTypes`.
-    static let oauthRedirectURI = URL(string: "io.github.jphastings:/oauth/callback")!
+    static let oauthRedirectURI = URL(string: "me.byjp.semble-share:/oauth/callback")!
 
     /// The scheme part of `oauthRedirectURI`, as `ASWebAuthenticationSession` wants it.
-    static let oauthCallbackScheme = "io.github.jphastings"
+    static let oauthCallbackScheme = "me.byjp.semble-share"
 
     /// `atproto` plus Semble's permission set, which unlocks the `network.cosmik.*` collections.
     static let oauthScope = "atproto include:network.cosmik.authFull"

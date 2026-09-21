@@ -95,7 +95,7 @@ public actor OAuthClient {
     // MARK: - Complete
 
     /// Step 5. `callbackURL` is the full URL the browser handed back, e.g.
-    /// `io.github.jphastings:/oauth/callback?iss=…&state=…&code=…`.
+    /// `me.byjp.semble-share:/oauth/callback?iss=…&state=…&code=…`.
     public func completeAuthorization(_ pending: PendingAuthorization, callbackURL: URL) async throws -> Session {
         let params = OAuthClient.queryParameters(of: callbackURL)
 
