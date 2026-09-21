@@ -3,9 +3,6 @@ name: Prepare release
 # Collects the change files merged since the last release into a "prepare
 # release" pull request that writes CHANGELOG.md and bumps MARKETING_VERSION.
 # Merging that PR is what actually releases: see tag-release.yml.
-#
-# Does nothing when there are no change files, so most pushes to main are a
-# no-op.
 
 on:
   push:
@@ -39,6 +36,12 @@ jobs:
         with:
           version: 0.23.0
 
+      # knope exits non-zero when nothing is waiting to be released, which is
+      # the usual state of a push to main. There is no flag to say "that's
+      # fine", so the step is allowed to fail — at the cost of a real failure
+      # (a bad token, say) also showing as a green run. Read the step's log if
+      # an expected release PR doesn't appear.
       - run: knope prepare-release --verbose
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
