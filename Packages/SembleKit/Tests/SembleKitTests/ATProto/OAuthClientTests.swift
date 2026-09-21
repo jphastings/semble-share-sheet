@@ -2,6 +2,16 @@ import OAuthenticator
 import XCTest
 @testable import SembleKit
 
+/// A box for a value written from inside a `@Sendable` closure.
+final class Captured<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value?
+    var value: Value? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
 /// Sign-in end to end against a stubbed identity, PDS and authorization
 /// server. OAuthenticator does the OAuth mechanics; these tests pin down what
 /// we add around it and that the pieces are wired together correctly.
@@ -50,10 +60,10 @@ final class OAuthClientTests: XCTestCase {
 
     func test_signInPushesTheRequestThenOpensTheBrowserWithIt() async throws {
         stubHappyPath()
-        var opened: (URL, String)?
+        let opened = Captured<(URL, String)>()
         let browser = approvingBrowser()
         let session = try await makeClient().signIn(account: "@Alice.example.com ") { url, scheme in
-            opened = (url, scheme)
+            opened.value = (url, scheme)
             return try await browser(url, scheme)
         }
 
@@ -66,7 +76,7 @@ final class OAuthClientTests: XCTestCase {
         XCTAssertEqual(fields["login_hint"], Fixtures.handle)
         XCTAssertNotNil(DecodedProof(par.headers["DPoP"]), "PAR must carry a DPoP proof")
 
-        let (url, scheme) = try XCTUnwrap(opened)
+        let (url, scheme) = try XCTUnwrap(opened.value)
         XCTAssertTrue(url.absoluteString.hasPrefix(Fixtures.authorizeEndpoint))
         XCTAssertEqual(queryParameters(of: url)["request_uri"], "urn:ietf:params:oauth:request_uri:abc")
         XCTAssertEqual(queryParameters(of: url)["client_id"], Fixtures.clientID.absoluteString)

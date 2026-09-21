@@ -75,8 +75,8 @@ final class SessionStoreContractTests: XCTestCase {
     static func assertSavingAgainReplaces(_ store: SessionStore, file: StaticString = #filePath, line: UInt = #line) throws {
         try store.save(SessionFixtures.session())
         var rotated = SessionFixtures.session()
-        rotated.accessToken = "new-access-token"
-        rotated.refreshToken = "new-refresh-token"
+        rotated.login.accessToken = Token(value: "new-access-token")
+        rotated.login.refreshToken = Token(value: "new-refresh-token")
         try store.save(rotated)
         XCTAssertEqual(try store.load(), rotated, file: file, line: line)
     }

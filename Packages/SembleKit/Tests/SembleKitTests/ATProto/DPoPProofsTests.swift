@@ -1,4 +1,5 @@
 import CryptoKit
+import Foundation
 import OAuthenticator
 import XCTest
 @testable import SembleKit
@@ -9,18 +10,26 @@ import XCTest
 final class DPoPProofsTests: XCTestCase {
     private let key = DPoPKey.P256()
 
-    private func parameters(nonce: String? = nil, tokenHash: String? = nil) -> DPoPSigner.JWTParameters {
-        DPoPSigner.JWTParameters(
-            keyType: "dpop+jwt",
-            httpMethod: "POST",
-            requestEndpoint: "https://pds.example/xrpc/com.atproto.repo.createRecord",
+    /// OAuthenticator's parameter type has no public initialiser, so proofs
+    /// are produced the way the library itself does it: by signing a request.
+    private actor Isolation {}
+
+    private func proof(nonce: String? = nil, token: String? = nil, tokenHash: String? = nil) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://pds.example/xrpc/com.atproto.repo.createRecord?x=1")!)
+        request.httpMethod = "POST"
+        let signed = try await DPoPSigner().buildProof(
+            request,
+            isolation: Isolation(),
+            using: DPoPProofs.generator(for: key),
             nonce: nonce,
+            token: token,
             tokenHash: tokenHash
         )
+        return try XCTUnwrap(signed.value(forHTTPHeaderField: "DPoP"))
     }
 
     func test_proofIsADPoPJWTSignedByTheKey() async throws {
-        let jwt = try await DPoPProofs.generator(for: key)(parameters())
+        let jwt = try await proof()
 
         let proof = try XCTUnwrap(DecodedProof(jwt))
         XCTAssertEqual(proof.header["typ"] as? String, "dpop+jwt")
@@ -35,7 +44,7 @@ final class DPoPProofsTests: XCTestCase {
 
     func test_proofNamesTheRequestAndTheMoment() async throws {
         let before = Int(Date().timeIntervalSince1970)
-        let jwt = try await DPoPProofs.generator(for: key)(parameters())
+        let jwt = try await proof()
         let proof = try XCTUnwrap(DecodedProof(jwt))
 
         XCTAssertEqual(proof.payload["htm"] as? String, "POST")
@@ -48,7 +57,7 @@ final class DPoPProofsTests: XCTestCase {
     }
 
     func test_proofCarriesTheNonceAndTokenHashWhenGiven() async throws {
-        let jwt = try await DPoPProofs.generator(for: key)(parameters(nonce: "server-nonce", tokenHash: "hash"))
+        let jwt = try await proof(nonce: "server-nonce", token: "access", tokenHash: "hash")
         let proof = try XCTUnwrap(DecodedProof(jwt))
 
         XCTAssertEqual(proof.nonce, "server-nonce")
@@ -56,9 +65,8 @@ final class DPoPProofsTests: XCTestCase {
     }
 
     func test_eachProofHasAFreshJTI() async throws {
-        let generator = DPoPProofs.generator(for: key)
-        let first = DecodedProof(try await generator(parameters()))?.payload["jti"] as? String
-        let second = DecodedProof(try await generator(parameters()))?.payload["jti"] as? String
+        let first = DecodedProof(try await proof())?.payload["jti"] as? String
+        let second = DecodedProof(try await proof())?.payload["jti"] as? String
         XCTAssertNotNil(first)
         XCTAssertNotEqual(first, second)
     }
