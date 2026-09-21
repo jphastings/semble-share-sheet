@@ -16,6 +16,9 @@ struct ShareSheetView: View {
             Divider().overlay(Color.sembleBorder)
             content
         }
+        .background(alignment: .top) {
+            SembleHeaderWash()
+        }
         .background {
             Color.sembleBackground.ignoresSafeArea()
         }
@@ -202,7 +205,7 @@ struct URLPreviewCard: View {
                 if let domain {
                     Text(domain)
                         .font(.caption)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.sembleLink)
                         .lineLimit(1)
                 }
                 Text(title)
