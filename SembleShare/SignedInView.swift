@@ -46,7 +46,7 @@ struct SignedInView: View {
                 .buttonStyle(.semble)
 
                 Button("Log out") {
-                    account.signOut()
+                    Task { await account.signOut() }
                 }
                 .font(.footnote)
                 .foregroundStyle(Color.sembleMutedText)

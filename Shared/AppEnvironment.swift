@@ -11,6 +11,15 @@ enum AppEnvironment {
     /// Shared container for anything both targets need on disk.
     static let appGroup = "group.me.byjp.SembleShare"
 
+    /// The app-group `UserDefaults`, used to remember whether the app has
+    /// launched before (see `clearSessionOnFreshInstall`). Written only by
+    /// the app, never the extension.
+    ///
+    /// Falls back to `.standard` rather than forcing: this is read during
+    /// app launch, and an unavailable suite should not be a crash. Both are
+    /// deleted with the app, which is the only property that matters here.
+    static let appGroupDefaults = UserDefaults(suiteName: appGroup) ?? .standard
+
     /// Keychain service name under which the `Session` is stored.
     static let keychainService = "me.byjp.SembleShare.session"
 

@@ -55,11 +55,22 @@ final class AccountModel {
         }
     }
 
-    /// Forgets the session locally. Tokens are not revoked server-side.
-    func signOut() {
-        try? sessionStore.clear()
-        session = nil
-        error = nil
+    /// Revokes the refresh token server-side (best effort; never blocks or
+    /// fails on it) then forgets the session locally. If the local clear
+    /// fails, `session` is left as it was and `error` is set — the extension
+    /// may still have working tokens, so the UI must not claim the user is
+    /// signed out when they aren't.
+    func signOut() async {
+        if let session {
+            await oauth.revoke(session)
+        }
+        do {
+            try sessionStore.clear()
+            session = nil
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     /// Trims whitespace and a leading "@", which people naturally type.

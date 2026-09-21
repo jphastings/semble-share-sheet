@@ -196,4 +196,64 @@ final class OAuthClientTests: XCTestCase {
         XCTAssertEqual(OAuthError.sessionExpired.localizedDescription, "Your Semble sign-in has expired. Open the Add to Semble app and log in again.")
         XCTAssertEqual(OAuthError.discoveryFailed("pds.example").localizedDescription, "Couldn't find the sign-in settings for pds.example.")
     }
+
+    // MARK: - Revocation
+
+    func test_revokeSendsTheRefreshTokenAndClientIDToTheAdvertisedEndpoint() async throws {
+        stub.on(
+            "\(Fixtures.issuer.absoluteString)/.well-known/oauth-authorization-server",
+            json: Fixtures.authorizationServerMetadata(revocationEndpoint: Fixtures.revocationEndpoint)
+        )
+        stub.on(Fixtures.revocationEndpoint, json: "{}")
+
+        await makeClient().revoke(Fixtures.session())
+
+        let request = try XCTUnwrap(stub.requests(to: Fixtures.revocationEndpoint).last)
+        let fields = formFields(of: request)
+        XCTAssertEqual(fields["token"], "refresh-0")
+        XCTAssertEqual(fields["client_id"], Fixtures.clientID.absoluteString)
+        XCTAssertEqual(request.headers["Content-Type"], "application/x-www-form-urlencoded")
+    }
+
+    func test_revokeDoesNothingWhenNoRevocationEndpointIsAdvertised() async {
+        stub.on(
+            "\(Fixtures.issuer.absoluteString)/.well-known/oauth-authorization-server",
+            json: Fixtures.authorizationServerMetadata()
+        )
+
+        await makeClient().revoke(Fixtures.session())
+
+        XCTAssertTrue(stub.requests(to: Fixtures.revocationEndpoint).isEmpty)
+    }
+
+    func test_revokeIgnoresAFailedRevocationRequest() async {
+        stub.on(
+            "\(Fixtures.issuer.absoluteString)/.well-known/oauth-authorization-server",
+            json: Fixtures.authorizationServerMetadata(revocationEndpoint: Fixtures.revocationEndpoint)
+        )
+        stub.on(Fixtures.revocationEndpoint, status: 500, json: "{}")
+
+        // Must return normally rather than throwing or hanging.
+        await makeClient().revoke(Fixtures.session())
+    }
+
+    func test_revokeRefusesAPlaintextRevocationEndpoint() async {
+        let insecure = "http://auth.example/oauth/revoke"
+        stub.on(
+            "\(Fixtures.issuer.absoluteString)/.well-known/oauth-authorization-server",
+            json: Fixtures.authorizationServerMetadata(revocationEndpoint: insecure)
+        )
+        stub.on(insecure, json: "{}")
+
+        await makeClient().revoke(Fixtures.session())
+
+        XCTAssertTrue(stub.requests(to: insecure).isEmpty, "the refresh token must never be sent over http")
+    }
+
+    func test_revokeDoesNothingWhenDiscoveryIsUnreachable() async {
+        // No stub for the `.well-known` document at all.
+        await makeClient().revoke(Fixtures.session())
+
+        XCTAssertTrue(stub.requests(to: Fixtures.revocationEndpoint).isEmpty)
+    }
 }

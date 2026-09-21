@@ -21,6 +21,7 @@ enum Fixtures {
     static let parEndpoint = "https://auth.example/oauth/par"
     static let tokenEndpoint = "https://auth.example/oauth/token"
     static let authorizeEndpoint = "https://auth.example/oauth/authorize"
+    static let revocationEndpoint = "https://auth.example/oauth/revoke"
 
     static func didDocument(did: String = did, handle: String? = handle, pds: URL? = pdsURL) -> String {
         let alsoKnownAs = handle.map { "\"at://\($0)\"" } ?? ""
@@ -48,8 +49,11 @@ enum Fixtures {
 
     /// A complete authorization-server document: OAuthenticator's
     /// `ServerMetadata` has no optional fields, so every one must be present.
-    static func authorizationServerMetadata(issuer: URL = issuer) -> String {
-        """
+    /// `revocation_endpoint` isn't one OAuthenticator decodes, but `OAuthClient`
+    /// reads it from this same document, so tests can opt it in.
+    static func authorizationServerMetadata(issuer: URL = issuer, revocationEndpoint: String? = nil) -> String {
+        let revocation = revocationEndpoint.map { #", "revocation_endpoint": "\#($0)""# } ?? ""
+        return """
         {
           "issuer": "\(issuer.absoluteString)",
           "authorization_endpoint": "\(authorizeEndpoint)",
@@ -65,7 +69,7 @@ enum Fixtures {
           "require_pushed_authorization_requests": true,
           "dpop_signing_alg_values_supported": ["ES256"],
           "require_request_uri_registration": true,
-          "client_id_metadata_document_supported": true
+          "client_id_metadata_document_supported": true\(revocation)
         }
         """
     }
