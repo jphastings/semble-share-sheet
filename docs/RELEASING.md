@@ -2,13 +2,32 @@
 
 `.github/workflows/release.yml` builds a signed App Store archive and uploads
 it to TestFlight. It runs on every tag matching `v*`, or by hand from the
-**Actions** tab (**Release to TestFlight → Run workflow**). The build number
-is the GitHub run number, so it always increases; the marketing version comes
-from `project.yml`.
+**Actions** tab (**Release to TestFlight → Run workflow**).
 
 ```sh
 git tag v1.0.0 && git push origin v1.0.0
 ```
+
+## Versions
+
+| | Where it comes from | Example |
+| --- | --- | --- |
+| Build (`CFBundleVersion`) | The GitHub run number, so it always increases | `7` |
+| Version (`CFBundleShortVersionString`) | The tag, with the `v` dropped | `1.0.0` |
+
+Running the workflow by hand rather than from a tag keeps the
+`MARKETING_VERSION` in `project.yml`, because there is no tag to read.
+
+Both values reach the app through the `CFBundleShortVersionString` and
+`CFBundleVersion` entries in each target's `info.properties` in
+`project.yml`, which point at the build settings. Do not remove them:
+XcodeGen's generated `Info.plist` otherwise hard-codes `1.0` and `1`, the
+build settings are ignored, and every upload after the first is rejected with
+"The bundle version must be higher than the previously uploaded version".
+
+Apple compares build numbers within one version string, so an upload fails if
+that pair has been used before. Both targets read the same two settings, which
+is what keeps the extension's version matching the app's, as Apple requires.
 
 The first step of the workflow checks that every secret below is set and
 fails with a clear message if one is missing, so nothing is built until the
@@ -104,7 +123,7 @@ before archiving.
    [Installing an Apple certificate on macOS runners for Xcode development](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/xcode).
 4. Runs `bundle exec fastlane ios beta` (see `fastlane/Fastfile`), which
    regenerates the project, configures manual signing per target, archives
-   with `CURRENT_PROJECT_VERSION` set to the run number, exports with
+   with the version and build number above, exports with
    `export_method: app-store`, authenticates with the API key and uploads
    with `upload_to_testflight`. It does not wait for Apple's processing.
 5. Records keyless build provenance for the `.ipa` with

@@ -30,7 +30,15 @@ platform :ios do
     # The build number must increase with every upload. GitHub's run number
     # does exactly that; locally, fall back to a timestamp.
     build_number = ENV.fetch("GITHUB_RUN_NUMBER") { Time.now.utc.strftime("%Y%m%d%H%M") }
+
+    # The version people see. A tag build takes it from the tag, so `v0.2.0`
+    # ships as 0.2.0; anything else keeps the MARKETING_VERSION in project.yml.
+    ref = ENV["GITHUB_REF_NAME"].to_s
+    marketing_version = ref.match?(/\Av\d+(\.\d+)*\z/) ? ref.delete_prefix("v") : nil
+
     UI.message("Build number: #{build_number}")
+    UI.message(marketing_version ? "Version: #{marketing_version} (from tag #{ref})"
+                                 : "Version: from project.yml (no version tag)")
 
     # The .xcodeproj is not committed; regenerate it from project.yml.
     sh("cd .. && xcodegen generate")
@@ -62,7 +70,10 @@ platform :ios do
       scheme: SCHEME,
       configuration: "Release",
       export_method: "app-store",
-      xcargs: "CURRENT_PROJECT_VERSION=#{build_number}",
+      xcargs: [
+        "CURRENT_PROJECT_VERSION=#{build_number}",
+        marketing_version ? "MARKETING_VERSION=#{marketing_version}" : nil,
+      ].compact.join(" "),
       export_options: {
         signingStyle: "manual",
         teamID: team_id,
