@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OAuthenticator
 import XCTest
 @testable import SembleKit
 
@@ -45,6 +46,8 @@ enum Fixtures {
         """
     }
 
+    /// A complete authorization-server document: OAuthenticator's
+    /// `ServerMetadata` has no optional fields, so every one must be present.
     static func authorizationServerMetadata(issuer: URL = issuer) -> String {
         """
         {
@@ -52,10 +55,23 @@ enum Fixtures {
           "authorization_endpoint": "\(authorizeEndpoint)",
           "token_endpoint": "\(tokenEndpoint)",
           "pushed_authorization_request_endpoint": "\(parEndpoint)",
+          "response_types_supported": ["code"],
+          "grant_types_supported": ["authorization_code", "refresh_token"],
+          "code_challenge_methods_supported": ["S256"],
+          "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+          "token_endpoint_auth_signing_alg_values_supported": ["ES256"],
+          "scopes_supported": ["atproto"],
+          "authorization_response_iss_parameter_supported": true,
+          "require_pushed_authorization_requests": true,
           "dpop_signing_alg_values_supported": ["ES256"],
-          "code_challenge_methods_supported": ["S256"]
+          "require_request_uri_registration": true,
+          "client_id_metadata_document_supported": true
         }
         """
+    }
+
+    static func serverMetadata(issuer: URL = issuer) -> ServerMetadata {
+        try! JSONDecoder().decode(ServerMetadata.self, from: Data(authorizationServerMetadata(issuer: issuer).utf8))
     }
 
     static func tokenResponse(
@@ -70,6 +86,7 @@ enum Fixtures {
         """
     }
 
+    /// The authorization server's "come back with this nonce" answer.
     static func useDPoPNonce(_ nonce: String) -> HTTPResponse {
         HTTPResponse(
             statusCode: 400,
@@ -78,22 +95,33 @@ enum Fixtures {
         )
     }
 
+    static func login(
+        accessToken: String = "access-0",
+        refreshToken: String = "refresh-0",
+        expiry: Date? = Date().addingTimeInterval(3600)
+    ) -> Login {
+        Login(
+            accessToken: Token(value: accessToken, expiry: expiry),
+            refreshToken: Token(value: refreshToken),
+            scopes: scope,
+            issuingServer: issuer.absoluteString,
+            additionalParams: ["did": did]
+        )
+    }
+
     static func session(
         accessToken: String = "access-0",
         refreshToken: String = "refresh-0",
-        expiresAt: Date? = Date().addingTimeInterval(3600),
-        privateKey: P256.Signing.PrivateKey = P256.Signing.PrivateKey()
+        expiry: Date? = Date().addingTimeInterval(3600),
+        key: DPoPKey = DPoPKey.P256()
     ) -> Session {
         Session(
             did: did,
             handle: handle,
             pdsURL: pdsURL,
-            authorizationServer: issuer,
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            expiresAt: expiresAt,
-            scope: scope,
-            dpopPrivateKey: privateKey.rawRepresentation
+            authorizationServer: serverMetadata(),
+            login: login(accessToken: accessToken, refreshToken: refreshToken, expiry: expiry),
+            dpopKey: key
         )
     }
 }
@@ -114,8 +142,34 @@ extension StubHTTPClient {
         )
     }
 
+    /// A pushed authorization request that succeeds straight away.
+    func stubPAR(requestURI: String = "urn:ietf:params:oauth:request_uri:abc") {
+        on(Fixtures.parEndpoint, status: 201, json: #"{"request_uri": "\#(requestURI)", "expires_in": 60}"#)
+    }
+
     func requests(to prefix: String) -> [HTTPRequest] {
         requests.filter { $0.url.absoluteString.hasPrefix(prefix) }
+    }
+}
+
+extension Data {
+    /// Base64url without padding, as JOSE uses.
+    var base64URL: String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    static func fromBase64URL(_ string: String) -> Data? {
+        var base64 = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+        return Data(base64Encoded: base64)
     }
 }
 
@@ -131,9 +185,9 @@ struct DecodedProof {
         guard let jwt else { return nil }
         let parts = jwt.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 3,
-              let headerData = Data(base64URLEncoded: parts[0]),
-              let payloadData = Data(base64URLEncoded: parts[1]),
-              let signature = Data(base64URLEncoded: parts[2]),
+              let headerData = Data.fromBase64URL(parts[0]),
+              let payloadData = Data.fromBase64URL(parts[1]),
+              let signature = Data.fromBase64URL(parts[2]),
               let header = try? JSONSerialization.jsonObject(with: headerData) as? [String: Any],
               let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any]
         else {
@@ -156,13 +210,19 @@ struct DecodedProof {
     /// The public key the proof advertises in its header.
     func advertisedPublicKey() -> P256.Signing.PublicKey? {
         guard let jwk, let x = jwk["x"] as? String, let y = jwk["y"] as? String,
-              let xData = Data(base64URLEncoded: x), let yData = Data(base64URLEncoded: y)
+              let xData = Data.fromBase64URL(x), let yData = Data.fromBase64URL(y)
         else { return nil }
         return try? P256.Signing.PublicKey(rawRepresentation: xData + yData)
     }
 }
 
-/// Decodes an `application/x-www-form-urlencoded` request body.
+/// The base64url SHA-256 of a string, as `ath` and PKCE challenges use.
+func sha256URL(_ string: String) -> String {
+    Data(SHA256.hash(data: Data(string.utf8))).base64URL
+}
+
+/// Decodes an `application/x-www-form-urlencoded` request body. Tolerates
+/// the unencoded spaces OAuthenticator's PAR body uses.
 func formFields(of request: HTTPRequest) -> [String: String] {
     guard let body = request.body, let string = String(data: body, encoding: .utf8) else { return [:] }
     var fields: [String: String] = [:]
@@ -172,6 +232,12 @@ func formFields(of request: HTTPRequest) -> [String: String] {
         fields[parts[0].removingPercentEncoding ?? parts[0]] = parts[1].removingPercentEncoding ?? parts[1]
     }
     return fields
+}
+
+/// A JSON request body as a dictionary.
+func jsonFields(of request: HTTPRequest) -> [String: Any] {
+    guard let body = request.body else { return [:] }
+    return (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
 }
 
 /// The query parameters of a URL, decoded.

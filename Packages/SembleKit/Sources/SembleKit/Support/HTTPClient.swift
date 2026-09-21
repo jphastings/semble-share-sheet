@@ -108,3 +108,34 @@ extension String {
         return addingPercentEncoding(withAllowedCharacters: allowed) ?? self
     }
 }
+
+// MARK: - OAuthenticator bridge
+
+import OAuthenticator
+
+extension HTTPClient {
+    /// This client as OAuthenticator's `URLResponseProvider`, so the OAuth
+    /// flow and the PDS calls go through the same seam (and the same test
+    /// stub) as everything else.
+    public var urlResponseProvider: URLResponseProvider {
+        { urlRequest in
+            guard let url = urlRequest.url else { throw URLError(.badURL) }
+            let request = HTTPRequest(
+                method: urlRequest.httpMethod ?? "GET",
+                url: url,
+                headers: urlRequest.allHTTPHeaderFields ?? [:],
+                body: urlRequest.httpBody
+            )
+            let response = try await self.send(request)
+            guard let http = HTTPURLResponse(
+                url: url,
+                statusCode: response.statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: response.headers
+            ) else {
+                throw URLError(.badServerResponse)
+            }
+            return (response.body, http)
+        }
+    }
+}

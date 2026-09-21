@@ -1,4 +1,5 @@
 import Foundation
+import OAuthenticator
 import XCTest
 @testable import SembleKit
 
@@ -9,12 +10,15 @@ enum SessionFixtures {
             did: "did:plc:alice",
             handle: handle,
             pdsURL: URL(string: "https://pds.example")!,
-            authorizationServer: URL(string: "https://auth.example")!,
-            accessToken: "access-token",
-            refreshToken: "refresh-token",
-            expiresAt: Date(timeIntervalSince1970: 1_700_000_000),
-            scope: "atproto include:network.cosmik.authFull",
-            dpopPrivateKey: Data((0 ..< 32).map { UInt8($0) })
+            authorizationServer: Fixtures.serverMetadata(),
+            login: Login(
+                accessToken: Token(value: "access-token", expiry: Date(timeIntervalSince1970: 1_700_000_000)),
+                refreshToken: Token(value: "refresh-token"),
+                scopes: "atproto include:network.cosmik.authFull",
+                issuingServer: "https://auth.example",
+                additionalParams: ["did": "did:plc:alice"]
+            ),
+            dpopKey: DPoPKey(keyData: Data((0 ..< 32).map { UInt8($0) }))
         )
     }
 }
@@ -28,15 +32,16 @@ final class SessionStoreContractTests: XCTestCase {
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(Session.self, from: data)
         XCTAssertEqual(decoded, original)
-        XCTAssertEqual(decoded.dpopPrivateKey, original.dpopPrivateKey)
+        XCTAssertEqual(decoded.dpopKey, original.dpopKey)
+        XCTAssertEqual(decoded.authorizationServer, original.authorizationServer)
     }
 
     func testSessionWithoutHandleOrExpiryRoundTrips() throws {
         var original = SessionFixtures.session(handle: nil)
-        original.expiresAt = nil
+        original.login.accessToken = Token(value: "access-token", expiry: nil)
         let decoded = try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(decoded, original)
-        XCTAssertFalse(decoded.isExpired(), "a session with no expiry is never treated as expired")
+        XCTAssertFalse(decoded.isExpired, "a session with no expiry is never treated as expired")
     }
 
     func testEmptyStoreLoadsNil() throws {
