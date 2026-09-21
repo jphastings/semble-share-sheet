@@ -78,9 +78,8 @@ the same one can sign every iOS app of the team.
 Both profiles must be of type **App Store Connect** (distribution) and must
 be regenerated whenever the certificate or the App ID's capabilities change.
 
-1. Make sure the two App IDs exist with **App Groups** and **Keychain
-   Sharing** enabled, and the app group assigned, as described in
-   [SETUP.md](SETUP.md).
+1. Make sure the two App IDs exist with **App Groups** enabled and the app
+   group assigned, as described in [SETUP.md](SETUP.md).
 2. In [Profiles](https://developer.apple.com/account/resources/profiles/list),
    click **+**, choose **App Store Connect**, pick the app's App ID, select
    the distribution certificate from step 1, and give it a name. Download it.
