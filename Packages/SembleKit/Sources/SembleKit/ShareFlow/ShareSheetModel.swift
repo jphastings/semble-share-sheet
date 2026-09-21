@@ -6,7 +6,11 @@ import Combine
 ///
 /// Lifecycle: create it with the shared URL, call `load()` once, let the user
 /// pick collections and type a note, then `save()`. Metadata (title, image)
-/// is a nicety: if it fails the sheet still saves the bare URL.
+/// is a nicety: if it fails the sheet still saves the bare URL, and it never
+/// holds up `.ready` — `preview` is filled in whenever it arrives. A URL that
+/// isn't safe to send to Semble's metadata endpoint without asking (see
+/// `previewAwaitingConfirmation`) isn't fetched until `loadPreview()` is
+/// called.
 @MainActor
 public final class ShareSheetModel: ObservableObject {
     /// Which screen the sheet should show.
@@ -35,6 +39,12 @@ public final class ShareSheetModel: ObservableObject {
 
     @Published public private(set) var phase: Phase = .loading
     @Published public private(set) var preview: URLPreview?
+    /// True when the URL needs the user's explicit go-ahead before its
+    /// preview is requested (it carries a query, fragment or userinfo that
+    /// could be a secret) and that hasn't happened yet. Call `loadPreview()`.
+    @Published public private(set) var previewAwaitingConfirmation = false
+    /// True while a preview fetch — automatic or via `loadPreview()` — is in flight.
+    @Published public private(set) var isLoadingPreview = false
     @Published public private(set) var collections: [CollectionSummary] = []
     /// URIs of the collections the card will be added to.
     @Published public var selected: Set<String> = []
@@ -136,8 +146,11 @@ public final class ShareSheetModel: ObservableObject {
 
     // MARK: Actions
 
-    /// Fetches the user's collections and the URL preview. Safe to call again
-    /// after a load failure.
+    /// Fetches the user's collections and, for URLs safe to preview without
+    /// asking first, the URL preview. Safe to call again after a load
+    /// failure. Ready as soon as collections have loaded; the preview (when
+    /// it isn't waiting on `loadPreview()`) is filled in independently and
+    /// never delays this.
     public func load() async {
         guard let library else {
             phase = .notSignedIn
@@ -149,11 +162,10 @@ public final class ShareSheetModel: ObservableObject {
         }
         phase = .loading
 
-        // Preview and collections are independent; run them together. The
-        // preview is best-effort and never fails the load.
-        let metadata = self.metadata
-        let previewTask = Task { () -> URLPreview? in
-            try? await metadata(url)
+        if url.isSafeToPreviewAutomatically {
+            fetchPreview(for: url)
+        } else {
+            previewAwaitingConfirmation = true
         }
 
         do {
@@ -161,14 +173,32 @@ public final class ShareSheetModel: ObservableObject {
             collections = fetched
             hasLoaded = true
         } catch {
-            preview = await previewTask.value
             failedStep = .load
             phase = .failed(error.localizedDescription)
             return
         }
 
-        preview = await previewTask.value
         phase = .ready
+    }
+
+    /// Fetches the preview for a URL that needed confirmation first. No-op if
+    /// it's already loading, already loaded, or never needed confirmation.
+    public func loadPreview() {
+        guard previewAwaitingConfirmation, let url else { return }
+        previewAwaitingConfirmation = false
+        fetchPreview(for: url)
+    }
+
+    /// Kicks off a best-effort preview fetch in the background; `preview`
+    /// (and `isLoadingPreview`) update whenever it resolves, whether or not
+    /// the sheet has since moved on to saving.
+    private func fetchPreview(for url: URL) {
+        isLoadingPreview = true
+        let metadata = self.metadata
+        Task {
+            preview = try? await metadata(url)
+            isLoadingPreview = false
+        }
     }
 
     /// Adds or removes a collection from the selection.

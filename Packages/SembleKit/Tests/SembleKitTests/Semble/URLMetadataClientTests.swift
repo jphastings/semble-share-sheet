@@ -57,6 +57,29 @@ final class URLMetadataClientTests: XCTestCase {
         XCTAssertEqual(components.queryItems?.first?.value, link.absoluteString)
     }
 
+    func testDropsAnImageURLThatIsNotHTTPS() async throws {
+        let http = StubHTTPClient()
+        http.on(endpoint, json: """
+        {"metadata": {"url": "https://example.com/post?id=1&ref=share", "imageUrl": "http://example.com/image.png"}}
+        """)
+        let client = URLMetadataClient(http: http)
+
+        let preview = try await client.preview(for: link)
+
+        XCTAssertNil(preview.imageURL)
+    }
+
+    func testSendsAShortTimeout() async throws {
+        let http = StubHTTPClient()
+        http.on(endpoint, json: #"{"metadata": {"url": "https://example.com/post?id=1&ref=share"}}"#)
+        let client = URLMetadataClient(http: http)
+
+        _ = try await client.preview(for: link)
+
+        let request = try XCTUnwrap(http.lastRequest)
+        XCTAssertEqual(request.timeout, 5)
+    }
+
     func testFallsBackToTheRequestedURLWhenTheResponseHasNone() async throws {
         let http = StubHTTPClient()
         http.on(endpoint, json: #"{"metadata": {"title": "Untitled"}}"#)
@@ -107,5 +130,17 @@ final class URLMetadataClientTests: XCTestCase {
         } catch {
             XCTFail("unexpected error \(error)", file: file, line: line)
         }
+    }
+
+    // MARK: - isSafeToPreviewAutomatically
+
+    func testAPlainURLIsSafeToPreviewAutomatically() {
+        XCTAssertTrue(URL(string: "https://example.com/article")!.isSafeToPreviewAutomatically)
+    }
+
+    func testURLsWithAQueryFragmentOrUserinfoAreNotSafeToPreviewAutomatically() {
+        XCTAssertFalse(URL(string: "https://example.com/article?ref=share")!.isSafeToPreviewAutomatically)
+        XCTAssertFalse(URL(string: "https://example.com/article#section")!.isSafeToPreviewAutomatically)
+        XCTAssertFalse(URL(string: "https://user:pass@example.com/article")!.isSafeToPreviewAutomatically)
     }
 }

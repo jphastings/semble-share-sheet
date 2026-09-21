@@ -43,6 +43,9 @@ public enum URLMetadataError: LocalizedError, Equatable {
 /// URL's title, description and image. This is the only call to
 /// `api.semble.so`; it needs no authentication.
 public struct URLMetadataClient: Sendable {
+    /// Short: the preview is best-effort and must never hold up the sheet.
+    private static let timeout: TimeInterval = 5
+
     private let configuration: SembleConfiguration
     private let http: HTTPClient
 
@@ -66,7 +69,8 @@ public struct URLMetadataClient: Sendable {
                 // Semble's usage analytics group requests by this self-declared
                 // header; it is optional and changes nothing about the response.
                 "x-semble-client": "semble-ios-share",
-            ]
+            ],
+            timeout: Self.timeout
         )
 
         let response: HTTPResponse
@@ -103,8 +107,26 @@ public struct URLMetadataClient: Sendable {
                 description: description,
                 siteName: siteName,
                 type: type,
-                imageURL: imageUrl.flatMap { URL(string: $0) }
+                // Never load a thumbnail over a scheme other than https: the
+                // page names it, and it's loaded unauthenticated from inside
+                // the memory-capped extension.
+                imageURL: imageUrl.flatMap { URL(string: $0) }.flatMap { $0.scheme == "https" ? $0 : nil }
             )
         }
+    }
+}
+
+extension URL {
+    /// True when the URL carries no query, fragment or userinfo (`user:pass@`)
+    /// — the only case where sending the whole URL to Semble's metadata
+    /// endpoint can't also send along a secret embedded in it. Anything else
+    /// needs the user's explicit go-ahead first; see
+    /// `ShareSheetModel.loadPreview()`.
+    var isSafeToPreviewAutomatically: Bool {
+        guard let components = URLComponents(url: self, resolvingAgainstBaseURL: false) else { return false }
+        return components.user == nil
+            && components.password == nil
+            && (components.query ?? "").isEmpty
+            && (components.fragment ?? "").isEmpty
     }
 }
