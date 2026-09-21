@@ -108,8 +108,10 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
           NSExtensionAttributes:
             NSExtensionActivationRule:
+              # A count, so an integer; but SupportsText is a flag and App
+              # Store validation rejects the .ipa unless it is a real boolean.
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
-              NSExtensionActivationSupportsText: 1
+              NSExtensionActivationSupportsText: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.byjp.SembleShare.ShareExtension
