@@ -1,0 +1,45 @@
+name: Tag release
+
+# Runs when the "prepare release" pull request is merged. Tags the version and
+# publishes a GitHub release, then builds and uploads to TestFlight.
+#
+# The TestFlight build is invoked directly rather than left to release.yml's
+# `push: tags` trigger: a tag created with GITHUB_TOKEN deliberately does not
+# start another workflow, so relying on that trigger would tag a release and
+# quietly ship nothing.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  # Deliberately not "release": the TestFlight build this calls uses that
+  # group, and sharing it would have each waiting on the other.
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true && github.head_ref == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
+        with:
+          version: 0.23.0
+
+      - run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  testflight:
+    needs: [tag]
+    uses: ./.github/workflows/release.yml
+    secrets: inherit

@@ -1,13 +1,15 @@
 name: Release to TestFlight
 
 # Builds a signed App Store archive and uploads it to TestFlight.
-# Runs for every v* tag, or by hand from the Actions tab.
+# Normally called by tag-release.yml once a release is tagged; also runs for a
+# v* tag pushed by hand, or on demand from the Actions tab.
 # Secrets and variables are documented in docs/RELEASING.md.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
