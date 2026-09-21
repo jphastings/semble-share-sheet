@@ -79,7 +79,7 @@ enum AppEnvironment {
     /// An authenticated client for the signed-in user's own PDS. Token refreshes
     /// are written back to `sessionStore` transparently.
     static func makePDSClient(session: Session) -> PDSClient {
-        PDSClient(session: session, sessionStore: sessionStore, oauth: oauthClient)
+        PDSClient(session: session, sessionStore: sessionStore, configuration: oauthConfiguration)
     }
 
     /// The Semble "library" (collections + save) for the signed-in user.

@@ -11,6 +11,9 @@ on:
 
 permissions:
   contents: read
+  # For actions/attest-build-provenance (keyless Sigstore signing of the .ipa).
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release
@@ -21,38 +24,36 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
+      # Shared, team-level credentials (the same ones every repo of this
+      # team signs with): the Team ID and a team-scoped App Store Connect
+      # API key, which fastlane uses to upload to TestFlight.
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      # Profile *names* (as shown in the Apple Developer portal). Repository
-      # variables are the natural home; secrets work too.
-      APP_PROFILE_NAME: ${{ vars.APP_PROFILE_NAME || secrets.APP_PROFILE_NAME }}
-      EXTENSION_PROFILE_NAME: ${{ vars.EXTENSION_PROFILE_NAME || secrets.EXTENSION_PROFILE_NAME }}
-      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+      APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
     steps:
-      - name: Check required secrets and variables
+      - name: Check required secrets
         env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          APP_PROVISION_PROFILE_BASE64: ${{ secrets.APP_PROVISION_PROFILE_BASE64 }}
-          EXTENSION_PROVISION_PROFILE_BASE64: ${{ secrets.EXTENSION_PROVISION_PROFILE_BASE64 }}
+          IOS_DISTRIBUTION_CERT_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERT_P12_BASE64 }}
+          IOS_DISTRIBUTION_CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERT_PASSWORD }}
+          IOS_APP_PROFILE_BASE64: ${{ secrets.IOS_APP_PROFILE_BASE64 }}
+          IOS_EXTENSION_PROFILE_BASE64: ${{ secrets.IOS_EXTENSION_PROFILE_BASE64 }}
         run: |
           missing=0
-          for name in APPLE_TEAM_ID BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD \
-                      APP_PROVISION_PROFILE_BASE64 EXTENSION_PROVISION_PROFILE_BASE64 \
-                      APP_PROFILE_NAME EXTENSION_PROFILE_NAME \
-                      APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64; do
+          for name in APPLE_TEAM_ID \
+                      APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID APP_STORE_CONNECT_API_KEY_BASE64 \
+                      IOS_DISTRIBUTION_CERT_P12_BASE64 IOS_DISTRIBUTION_CERT_PASSWORD \
+                      IOS_APP_PROFILE_BASE64 IOS_EXTENSION_PROFILE_BASE64; do
             if [ -z "${!name}" ]; then
-              echo "::error::Missing secret or variable: $name (see docs/RELEASING.md)"
+              echo "::error::Missing secret: $name (see docs/RELEASING.md)"
               missing=1
             fi
           done
           if [ "$missing" -ne 0 ]; then
-            echo "One or more required secrets/variables are not set. Nothing was built."
+            echo "One or more required secrets are not set. Nothing was built."
             exit 1
           fi
-          echo "All required secrets and variables are present."
+          echo "All required secrets are present."
 
       - uses: actions/checkout@v4
 
@@ -71,26 +72,27 @@ jobs:
 
       # Follows GitHub's documented approach for signing on a hosted macOS
       # runner: decode the certificate and profiles from secrets into a
-      # temporary keychain that is deleted at the end of the job.
+      # temporary keychain that is deleted at the end of the job. The
+      # keychain password is generated here and never leaves the job.
       # https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/xcode
       - name: Install Apple certificate and provisioning profiles
         env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          APP_PROVISION_PROFILE_BASE64: ${{ secrets.APP_PROVISION_PROFILE_BASE64 }}
-          EXTENSION_PROVISION_PROFILE_BASE64: ${{ secrets.EXTENSION_PROVISION_PROFILE_BASE64 }}
+          IOS_DISTRIBUTION_CERT_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERT_P12_BASE64 }}
+          IOS_DISTRIBUTION_CERT_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERT_PASSWORD }}
+          IOS_APP_PROFILE_BASE64: ${{ secrets.IOS_APP_PROFILE_BASE64 }}
+          IOS_EXTENSION_PROFILE_BASE64: ${{ secrets.IOS_EXTENSION_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
           CERTIFICATE_PATH="$RUNNER_TEMP/distribution.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
 
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$IOS_DISTRIBUTION_CERT_P12_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$IOS_DISTRIBUTION_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
 
@@ -100,6 +102,8 @@ jobs:
           LEGACY_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           XCODE_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
           mkdir -p "$LEGACY_DIR" "$XCODE_DIR"
+          # Each profile's name is read from the profile itself and handed
+          # to the Fastfile, so nothing has to be typed twice.
           install_profile() {
             local tmp="$RUNNER_TEMP/$1.mobileprovision"
             echo -n "$2" | base64 --decode -o "$tmp"
@@ -109,10 +113,11 @@ jobs:
             name=$(plutil -extract Name raw -o - "$tmp.plist")
             cp "$tmp" "$LEGACY_DIR/$uuid.mobileprovision"
             cp "$tmp" "$XCODE_DIR/$uuid.mobileprovision"
+            echo "$3=$name" >> "$GITHUB_ENV"
             echo "Installed profile '$name' ($uuid)"
           }
-          install_profile app "$APP_PROVISION_PROFILE_BASE64"
-          install_profile extension "$EXTENSION_PROVISION_PROFILE_BASE64"
+          install_profile app "$IOS_APP_PROFILE_BASE64" APP_PROFILE_NAME
+          install_profile extension "$IOS_EXTENSION_PROFILE_BASE64" EXTENSION_PROFILE_NAME
 
       - name: Build and upload to TestFlight
         env:
@@ -120,6 +125,13 @@ jobs:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           FASTLANE_SKIP_UPDATE_CHECK: "1"
         run: bundle exec fastlane ios beta
+
+      # Keyless (Sigstore) provenance: anyone can later verify that this
+      # exact .ipa was built by this workflow from this commit.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: fastlane/builds/SembleShare.ipa
 
       - name: Upload build artefacts
         if: always()

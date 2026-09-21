@@ -1,4 +1,5 @@
 import Foundation
+import OAuthenticator
 
 /// How this app identifies itself to authorization servers.
 ///
@@ -22,6 +23,17 @@ public struct OAuthClientConfiguration: Equatable, Sendable {
         self.scope = scope
     }
 
-    /// The `client_id` as sent on the wire.
-    var clientIDString: String { clientID.absoluteString }
+    /// The same information in the shape OAuthenticator wants. A public
+    /// client has no secret, so `clientPassword` is empty.
+    public var appCredentials: AppCredentials {
+        AppCredentials(
+            clientId: clientID.absoluteString,
+            clientPassword: "",
+            scopes: scope.split(separator: " ").map(String.init),
+            callbackURL: redirectURI
+        )
+    }
+
+    /// The custom URL scheme the callback arrives on.
+    public var callbackScheme: String? { redirectURI.scheme }
 }

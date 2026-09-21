@@ -1,5 +1,6 @@
 import AuthenticationServices
 import Foundation
+import OAuthenticator
 import Observation
 import SembleKit
 import SwiftUI
@@ -41,13 +42,10 @@ final class AccountModel {
         defer { isSigningIn = false }
 
         do {
-            let pending = try await oauth.beginAuthorization(account: account)
-            let callbackURL = try await browser.authenticate(
-                using: pending.authorizationURL,
-                callbackURLScheme: AppEnvironment.oauthCallbackScheme,
-                preferredBrowserSession: .ephemeral
-            )
-            let session = try await oauth.completeAuthorization(pending, callbackURL: callbackURL)
+            // OAuthenticator drives the browser through SwiftUI's session; the
+            // ephemeral mode keeps the PDS login out of Safari's cookie jar.
+            let openBrowser = browser.userAuthenticator(preferredBrowserSession: .ephemeral)
+            let session = try await oauth.signIn(account: account, openBrowser: openBrowser)
             try sessionStore.save(session)
             self.session = session
         } catch let authError as ASWebAuthenticationSessionError where authError.code == .canceledLogin {

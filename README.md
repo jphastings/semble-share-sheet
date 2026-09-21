@@ -31,6 +31,14 @@ semble.so._
 Details, including the package API, are in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+The OAuth flow (PAR, PKCE, DPoP-bound tokens, refresh) is provided by
+[OAuthenticator](https://github.com/ATProtoKit/OAuthenticator), with
+[Jot](https://github.com/ATProtoKit/Jot) signing the DPoP proofs. Both are
+small, dependency-free Swift packages from the
+[ATProtoKit](https://github.com/ATProtoKit) organisation; the security-
+sensitive code is theirs, not ours. Everything else the app needs (identity
+resolution, two XRPC calls, Semble's record types) is in this repository.
+
 ## Permissions
 
 Sign-in requests the scope `atproto include:network.cosmik.authFull`. The
@@ -50,7 +58,7 @@ Until then, build it yourself.
 
 ## Building locally
 
-You need Xcode 16 or newer and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+You need Xcode 16.3 or newer (the OAuth library uses Swift 6.1 syntax) and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
 brew install xcodegen

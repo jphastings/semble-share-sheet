@@ -57,11 +57,15 @@ permission set Semble publishes.
 
 In [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/list):
 
-1. Register two **App IDs** (explicit, not wildcard) for the app and the
-   extension bundle ids. On both, enable the **App Groups** and
-   **Keychain Sharing** capabilities.
-2. Register an **App Group** with the id from `project.yml`
-   (`group.me.byjp.SembleShare` by default) and assign it to both App IDs.
+1. Register an **App Group** with the id from `project.yml`
+   (`group.me.byjp.SembleShare` by default).
+2. Register two **App IDs** (explicit, not wildcard) for the app and the
+   extension bundle ids. On both, enable the **App Groups** capability and
+   assign the group from step 1. There is no Keychain Sharing capability to
+   enable in the portal: every App ID may use the keychain access group
+   `<Team ID>.<bundle id>`, and `project.yml` already puts that group in
+   both targets' entitlements (Xcode's "Keychain Sharing" checkbox does
+   nothing more).
    Apple's guides: [Configuring App Groups](https://developer.apple.com/documentation/xcode/configuring-app-groups)
    and [Sharing access to keychain items among a collection of apps](https://developer.apple.com/documentation/security/sharing-access-to-keychain-items-among-a-collection-of-apps).
 3. In [App Store Connect](https://appstoreconnect.apple.com), create the app

@@ -14,27 +14,49 @@ The first step of the workflow checks that every secret below is set and
 fails with a clear message if one is missing, so nothing is built until the
 configuration is complete.
 
-## Secrets and variables
+## Secrets
 
-Add these under **Settings → Secrets and variables → Actions**. Values marked
-_variable_ may go under **Variables** (they are not sensitive); the workflow
-also accepts them as secrets.
+Add these under **Settings → Secrets and variables → Actions → Secrets**.
+
+### Shared team credentials (already provisioned)
+
+These identify the Apple Developer *team*, not this app, and are the same
+across every repository the team signs. They are pushed centrally and should
+not be created by hand here.
 
 | Name | What it is |
 | --- | --- |
-| `APPLE_TEAM_ID` | Your 10-character Team ID, shown at the top right of the [Apple Developer account page](https://developer.apple.com/account) under *Membership details*. |
-| `BUILD_CERTIFICATE_BASE64` | An **Apple Distribution** certificate with its private key, exported as `.p12` and base64-encoded. See below. |
-| `P12_PASSWORD` | The password you chose when exporting the `.p12`. |
-| `KEYCHAIN_PASSWORD` | Any random string. It protects the temporary keychain created on the runner for the duration of the job, e.g. `openssl rand -base64 24`. |
-| `APP_PROVISION_PROFILE_BASE64` | App Store provisioning profile for `me.byjp.SembleShare`, base64-encoded. |
-| `EXTENSION_PROVISION_PROFILE_BASE64` | App Store provisioning profile for `me.byjp.SembleShare.ShareExtension`, base64-encoded. |
-| `APP_PROFILE_NAME` (_variable_) | The **name** of the app's profile exactly as entered in the developer portal, e.g. `Add to Semble App Store`. |
-| `EXTENSION_PROFILE_NAME` (_variable_) | The name of the extension's profile, e.g. `Add to Semble Extension App Store`. |
-| `APP_STORE_CONNECT_API_KEY_ID` | The Key ID of an App Store Connect API key. |
-| `APP_STORE_CONNECT_API_ISSUER_ID` | The Issuer ID shown above the key list. |
-| `APP_STORE_CONNECT_API_KEY_BASE64` | The downloaded `.p8` file, base64-encoded. |
+| `APPLE_TEAM_ID` | The 10-character Team ID. |
+| `ASC_KEY_ID` | Key ID of a team-scoped App Store Connect API key. |
+| `ASC_ISSUER_ID` | Issuer ID for that key. |
+| `ASC_PRIVATE_KEY_BASE64` | The key's `.p8` file, base64-encoded. |
 
-### Distribution certificate (`BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`)
+The API key is used only to upload the build to TestFlight, which the
+**Developer** role allows. It is *not* used to create certificates or
+profiles (that would need an Admin key), which is why the app-specific
+material below has to be provided.
+
+The macOS Developer ID certificate and notarisation credentials that come
+with the same bundle (`MACOS_CERT_P12_BASE64`, `MACOS_CERT_PASSWORD`) are not
+used: Developer ID signing and notarisation are for apps distributed
+outside the App Store on macOS, and an iOS TestFlight build must be signed
+with an **Apple Distribution** certificate and App Store provisioning
+profiles instead.
+
+### App-specific signing material (needed once)
+
+| Name | What it is |
+| --- | --- |
+| `IOS_DISTRIBUTION_CERT_P12_BASE64` | An **Apple Distribution** certificate with its private key, exported as `.p12` and base64-encoded. See below. |
+| `IOS_DISTRIBUTION_CERT_PASSWORD` | The password chosen when exporting the `.p12`. |
+| `IOS_APP_PROFILE_BASE64` | App Store provisioning profile for `me.byjp.SembleShare`, base64-encoded. |
+| `IOS_EXTENSION_PROFILE_BASE64` | App Store provisioning profile for `me.byjp.SembleShare.ShareExtension`, base64-encoded. |
+
+There is no keychain-password secret: the workflow generates one with
+`openssl rand` for the temporary keychain it creates and deletes within the
+job. The profile names are read from the profiles themselves.
+
+### Distribution certificate (`IOS_DISTRIBUTION_CERT_P12_BASE64`, `IOS_DISTRIBUTION_CERT_PASSWORD`)
 
 1. In Xcode, **Settings → Accounts → (your team) → Manage Certificates…**,
    click **+** and choose **Apple Distribution**. (Or create one in the
@@ -43,49 +65,34 @@ also accepts them as secrets.
 2. Open **Keychain Access**, find the *Apple Distribution: …* certificate
    under *My Certificates*, expand it so the private key is included,
    right-click → **Export…**, format *Personal Information Exchange (.p12)*,
-   and set a password. That password is `P12_PASSWORD`.
+   and set a password. That password is `IOS_DISTRIBUTION_CERT_PASSWORD`.
 3. Encode it: `base64 -i Certificates.p12 | pbcopy` and paste as
-   `BUILD_CERTIFICATE_BASE64`.
+   `IOS_DISTRIBUTION_CERT_P12_BASE64`.
 
 Distribution certificates expire after a year; when one does, repeat this
-and update the secret.
+and update the secret. An Apple Distribution certificate is team-wide, so
+the same one can sign every iOS app of the team.
 
 ### Provisioning profiles
 
 Both profiles must be of type **App Store Connect** (distribution) and must
 be regenerated whenever the certificate or the App ID's capabilities change.
 
-1. Make sure the two App IDs exist with **App Groups** and **Keychain
-   Sharing** enabled, and the app group assigned, as described in
-   [SETUP.md](SETUP.md).
+1. Make sure the two App IDs exist with **App Groups** enabled and the app
+   group assigned, as described in [SETUP.md](SETUP.md).
 2. In [Profiles](https://developer.apple.com/account/resources/profiles/list),
    click **+**, choose **App Store Connect**, pick the app's App ID, select
    the distribution certificate from step 1, and give it a name. Download it.
 3. Repeat for the extension's App ID.
 4. Encode each: `base64 -i "Add_to_Semble_App_Store.mobileprovision" | pbcopy`
-   → `APP_PROVISION_PROFILE_BASE64`, and the same for the extension.
-5. Put the two names (exactly as typed in the portal) in `APP_PROFILE_NAME`
-   and `EXTENSION_PROFILE_NAME`.
+   → `IOS_APP_PROFILE_BASE64`, and the same for the extension.
 
 The workflow installs the profiles into both locations Xcode 16 and older
-tooling look in, named by their UUID. The Fastfile writes the team, manual
-signing and the profile name into each target with
+tooling look in, named by their UUID, and exports each profile's name for the
+Fastfile, which writes the team, manual signing and the profile name into
+each target with
 [`update_code_signing_settings`](https://docs.fastlane.tools/actions/update_code_signing_settings/)
 before archiving.
-
-### App Store Connect API key
-
-1. In App Store Connect go to **Users and Access → Integrations → App Store
-   Connect API** ([direct link](https://appstoreconnect.apple.com/access/integrations/api)).
-2. Under *Team Keys*, click **+**. Name it (e.g. `GitHub Actions`) and give
-   it the **App Manager** role (the least that can upload builds and manage
-   TestFlight).
-3. Note the **Issuer ID** (above the table) → `APP_STORE_CONNECT_API_ISSUER_ID`,
-   and the new key's **Key ID** → `APP_STORE_CONNECT_API_KEY_ID`.
-4. **Download** the `.p8` file (you get one chance) and encode it:
-   `base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy` → `APP_STORE_CONNECT_API_KEY_BASE64`.
-
-Apple's reference: [Creating API Keys for App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api).
 
 ## What the workflow does
 
@@ -100,7 +107,11 @@ Apple's reference: [Creating API Keys for App Store Connect API](https://develop
    with `CURRENT_PROJECT_VERSION` set to the run number, exports with
    `export_method: app-store`, authenticates with the API key and uploads
    with `upload_to_testflight`. It does not wait for Apple's processing.
-5. Uploads the `.ipa` and dSYMs as a workflow artefact and deletes the
+5. Records keyless build provenance for the `.ipa` with
+   [`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance),
+   so anyone can verify which commit and workflow produced a given build
+   (`gh attestation verify SembleShare.ipa --owner jphastings`).
+6. Uploads the `.ipa` and dSYMs as a workflow artefact and deletes the
    temporary keychain and profiles, even if a previous step failed.
 
 Once App Store Connect finishes processing (usually 5–15 minutes) the build
