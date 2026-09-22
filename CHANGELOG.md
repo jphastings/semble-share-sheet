@@ -3,6 +3,12 @@
 Newest first. Entries from 0.2.2 onwards are written by the release
 automation from the files in `.changeset/`; see CONTRIBUTING.md.
 
+## 0.2.3 (2026-09-22)
+
+### Fixes
+
+- On a poor connection, a save now falls back to "will add when you're online" within seconds instead of spinning for up to a minute.
+
 ## 0.2.2 (2026-09-22)
 
 ### Features
