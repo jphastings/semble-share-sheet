@@ -76,16 +76,21 @@ public protocol HTTPClient: Sendable {
 
 public struct URLSessionHTTPClient: HTTPClient {
     private let session: URLSession
+    private let defaultTimeout: TimeInterval?
 
-    public init(session: URLSession = .shared) {
+    /// - Parameter defaultTimeout: The timeout for requests that don't set
+    ///   their own, including every request made through
+    ///   `urlResponseProvider`. `nil` keeps `URLSession`'s 60 s.
+    public init(session: URLSession = .shared, defaultTimeout: TimeInterval? = nil) {
         self.session = session
+        self.defaultTimeout = defaultTimeout
     }
 
     public func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
-        if let timeout = request.timeout {
+        if let timeout = request.timeout ?? defaultTimeout {
             urlRequest.timeoutInterval = timeout
         }
         for (name, value) in request.headers {

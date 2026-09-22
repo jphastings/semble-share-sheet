@@ -109,13 +109,15 @@ enum AppEnvironment {
     static let oauthClient = OAuthClient(configuration: oauthConfiguration)
 
     /// An authenticated client for the signed-in user's own PDS. Token refreshes
-    /// are written back to `sessionStore` transparently.
-    static func makePDSClient(session: Session) -> PDSClient {
-        PDSClient(session: session, sessionStore: sessionStore, configuration: oauthConfiguration)
+    /// are written back to `sessionStore` transparently. Pass a custom `requestTimeout`
+    /// to override the default 60s request timeout.
+    static func makePDSClient(session: Session, requestTimeout: TimeInterval? = nil) -> PDSClient {
+        PDSClient(session: session, sessionStore: sessionStore, configuration: oauthConfiguration, http: URLSessionHTTPClient(defaultTimeout: requestTimeout))
     }
 
     /// The Semble "library" (collections + save) for the signed-in user.
-    static func makeLibrary(session: Session) -> SembleLibrary {
-        SembleLibrary(pds: makePDSClient(session: session))
+    /// Pass a custom `requestTimeout` to override the default 60s request timeout.
+    static func makeLibrary(session: Session, requestTimeout: TimeInterval? = nil) -> SembleLibrary {
+        SembleLibrary(pds: makePDSClient(session: session, requestTimeout: requestTimeout))
     }
 }

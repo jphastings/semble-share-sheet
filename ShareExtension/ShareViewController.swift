@@ -7,6 +7,14 @@ import UIKit
 /// loads the session from the shared Keychain, builds the `ShareSheetModel`
 /// and hosts the SwiftUI sheet. All decisions live in the model.
 final class ShareViewController: UIViewController {
+    /// How long a PDS request may go without hearing back before it fails,
+    /// so a save on a useless connection lands in the queue promptly. It's
+    /// an idle timeout, so a slow but working transfer isn't cut off.
+    // ponytail: per request, not a cap on the whole save (refresh + card +
+    // note + links can each take up to 10 s); add an overall deadline if
+    // that shows up in practice.
+    private static let requestTimeout: TimeInterval = 10
+
     private var model: ShareSheetModel?
 
     override func viewDidLoad() {
@@ -26,7 +34,7 @@ final class ShareViewController: UIViewController {
 
     private func showSheet(for url: URL?) {
         let session = (try? AppEnvironment.sessionStore.load()) ?? nil
-        let library: (any Library)? = session.map { AppEnvironment.makeLibrary(session: $0) }
+        let library: (any Library)? = session.map { AppEnvironment.makeLibrary(session: $0, requestTimeout: Self.requestTimeout) }
         let metadataClient = URLMetadataClient()
 
         // Don't block the sheet on this: whatever's already queued from a
