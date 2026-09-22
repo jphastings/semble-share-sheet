@@ -65,11 +65,17 @@ public struct PendingSave: Codable, Equatable, Sendable {
         for collection in collections where linkRkeys[collection.uri] == nil {
             linkRkeys[collection.uri] = TID.next()
         }
-        for newCollection in newCollections {
-            let uri = newCollection.uri(did: did)
-            if linkRkeys[uri] == nil {
-                linkRkeys[uri] = TID.next()
-            }
+        for newCollection in newCollections where linkRkeys[linkKey(for: newCollection)] == nil {
+            linkRkeys[linkKey(for: newCollection)] = TID.next()
         }
+    }
+
+    /// The `linkRkeys` key for a collection that doesn't exist yet. The PDS
+    /// hands back the URI it actually wrote, which need not be the one
+    /// computed here (a store could answer for a different repo), so both
+    /// sides look the rkey up under this key rather than under whatever
+    /// came back.
+    public func linkKey(for collection: PendingCollection) -> String {
+        collection.uri(did: did)
     }
 }

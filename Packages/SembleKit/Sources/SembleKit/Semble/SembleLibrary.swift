@@ -113,7 +113,7 @@ public actor SembleLibrary: Library {
                 configuration: configuration
             )
             let ref = try await createIdempotently(collection: configuration.collectionCollection, record: record, rkey: newCollection.rkey)
-            newCollectionRefs[newCollection.uri(did: pending.did, configuration: configuration)] = ref
+            newCollectionRefs[pending.linkKey(for: newCollection)] = ref
         }
 
         // 2. The URL card. Everything else points at it.
@@ -134,16 +134,23 @@ public actor SembleLibrary: Library {
 
         // 4. One link per chosen collection — existing ones, and the ones
         // just created above.
-        let linkTargets = pending.collections + pending.newCollections.compactMap { newCollectionRefs[$0.uri(did: pending.did, configuration: configuration)] }
+        // Each target is the ref to link to, paired with the key its link
+        // rkey was filed under: a collection that already existed is keyed by
+        // its own URI, a new one by `PendingSave.linkKey(for:)`.
+        let linkTargets: [(key: String, ref: StrongRef)] =
+            pending.collections.map { (key: $0.uri, ref: $0) }
+            + pending.newCollections.compactMap { newCollection in
+                newCollectionRefs[pending.linkKey(for: newCollection)].map { (key: pending.linkKey(for: newCollection), ref: $0) }
+            }
         var linkRefs: [StrongRef] = []
         if !linkTargets.isEmpty {
             let did = await store.did
-            for collection in linkTargets {
+            for (key, collection) in linkTargets {
                 // `PendingSave.ensureLinkRkeys()` keeps this populated for
                 // every selected collection, new or existing; a missing
                 // entry would mean the caller mutated `collections` /
                 // `newCollections` without calling it.
-                guard let linkRkey = pending.linkRkeys[collection.uri] else { continue }
+                guard let linkRkey = pending.linkRkeys[key] else { continue }
                 let link = CollectionLinkRecord(
                     collection: collection,
                     card: cardRef,
