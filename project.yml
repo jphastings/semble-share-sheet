@@ -21,7 +21,7 @@ settings:
     # UI targets use `minimal` so SwiftUI/UIKit bridging doesn't drown real
     # warnings.
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: 0.2.1
+    MARKETING_VERSION: 0.2.2
     CURRENT_PROJECT_VERSION: 1
     # Team is injected by CI (xcconfig / xcodebuild flags). Automatic signing
     # with an empty team still allows `CODE_SIGNING_ALLOWED=NO` simulator builds.
