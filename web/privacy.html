@@ -64,37 +64,66 @@
     <p>
       The app stores your AT Protocol tokens, and the DPoP key that protects
       them, in the iOS Keychain. Only the app and its share extension can read
-      them. The tokens go only to your own PDS.
+      them. They stay on this device: they are not included in backups and do
+      not move to a new phone. The tokens go only to your own PDS and its
+      authorisation server.
     </p>
-    <p>Sign out to delete them. Delete the app to delete them.</p>
+    <p>
+      Signing out asks your authorisation server to revoke the tokens, then
+      deletes them from the device. If the device is offline at the time, the
+      tokens are still deleted but the server is not told.
+    </p>
+    <p>
+      Deleting the app does not delete them straight away. iOS keeps Keychain
+      items after an app is removed, where no other app can read them. If you
+      install the app again, it deletes them the first time it opens. To be
+      sure they are revoked and gone, sign out before you delete the app.
+    </p>
     <p>
       If a link is saved while your device has no connection, the app keeps
-      it — the link, your note and the collections you chose — in its private
-      on-device storage until it can be sent to your PDS, then deletes it. The
-      list of your collections is kept the same way, so the app still works
-      offline, and is replaced each time it's fetched again.
+      it — the link and its preview, your note and the collections you chose —
+      in its private on-device storage until it can be sent to your PDS, then
+      deletes it. The list of your collections is kept the same way, so the app
+      still works offline, and is replaced each time it's fetched again.
+      Signing out does not remove these. Deleting the app does.
     </p>
 
     <h2>Who the app contacts</h2>
     <p>The app connects to these services and to no others.</p>
     <ul>
       <li>
-        <strong>Your PDS and its authorisation server</strong>, to sign in and
-        to write the records you save. Your account decides which servers
-        these are.
+        <strong>Your PDS and its authorisation server</strong>, to sign in, to
+        write the records you save, and to revoke your tokens when you sign
+        out. Your account decides which servers these are.
       </li>
       <li>
         <strong><code>plc.directory</code></strong> and
         <strong><code>public.api.bsky.app</code></strong>, to turn your handle
-        into the address of your PDS. These look-ups are public. They use no
-        credentials.
+        into the address of your PDS. (An account with a <code>did:web</code>
+        identity is looked up on the site that identity names instead of
+        <code>plc.directory</code>.) If that fails, the app asks the website
+        your handle is named after instead (for <code>alice.example.com</code>,
+        that is <code>alice.example.com</code>). These look-ups are public.
+        They use no credentials.
       </li>
       <li>
         <strong><code>api.semble.so</code></strong>, for the link preview in
         the share sheet. The app asks Semble's public
         <code>network.cosmik.card.getUrlMetadata</code> endpoint for a title, a
-        description and an image. It sends only the link, with no credentials.
-        The app makes no other request to Semble.
+        description and an image. It sends only the link, with no credentials,
+        and Semble then fetches the page itself. The app makes no other request
+        to Semble.
+        <br>
+        A link with a query string (<code>?…</code>), a fragment
+        (<code>#…</code>) or a username in it might carry something private,
+        such as a sign-in code. For those links the app sends nothing until
+        you tap <em>Load preview</em>.
+      </li>
+      <li>
+        <strong>The site that hosts the preview image</strong>, to show its
+        thumbnail. The linked page chooses this site, so it can be any site.
+        Your device fetches the image directly, over https only, so that site
+        sees your IP address, as it would if you opened the page.
       </li>
     </ul>
 
