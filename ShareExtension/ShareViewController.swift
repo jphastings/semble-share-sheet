@@ -29,10 +29,22 @@ final class ShareViewController: UIViewController {
         let library: (any Library)? = session.map { AppEnvironment.makeLibrary(session: $0) }
         let metadataClient = URLMetadataClient()
 
+        // Don't block the sheet on this: whatever's already queued from a
+        // previous offline attempt gets a chance to go out now, but the
+        // sheet the user is looking at is for a new save.
+        if let session, let library {
+            Task.detached(priority: .utility) {
+                await AppEnvironment.saveQueue.drain(for: session.did, using: library)
+            }
+        }
+
         let model = ShareSheetModel(
             library: library,
             metadata: { url in try await metadataClient.preview(for: url) },
-            url: url
+            url: url,
+            did: session?.did,
+            queue: AppEnvironment.saveQueue,
+            collectionsCache: AppEnvironment.collectionsCache
         )
         self.model = model
 

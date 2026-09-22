@@ -43,6 +43,29 @@ enum AppEnvironment {
     /// Where "Open Semble" goes.
     static let sembleWebsiteURL = SembleConfiguration.production.websiteURL
 
+    // MARK: Offline saves
+
+    /// The shared app-group container, or `nil` on an unsigned build with no
+    /// team configured — the same case `keychainAccessGroup` falls back for.
+    static var appGroupContainerURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+    }
+
+    /// Falls back to a process-local temporary directory when the app group
+    /// is unavailable (unsigned simulator build), so local development still
+    /// works; the app and extension then simply don't share a queue, same as
+    /// `keychainAccessGroup`'s fallback.
+    private static var offlineStorageRoot: URL {
+        appGroupContainerURL ?? FileManager.default.temporaryDirectory
+    }
+
+    /// Saves the share sheet couldn't write to the PDS right away, kept
+    /// until the app or the extension next drains them.
+    static let saveQueue = SaveQueue(directory: offlineStorageRoot.appendingPathComponent("PendingSaves", isDirectory: true))
+
+    /// The last-known collection list per DID, so the picker works offline.
+    static let collectionsCache = CollectionsCache(directory: offlineStorageRoot.appendingPathComponent("CollectionsCache", isDirectory: true))
+
     // MARK: Keychain access group
 
     /// The shared keychain access group, e.g. `ABCDE12345.me.byjp.SembleShare`.

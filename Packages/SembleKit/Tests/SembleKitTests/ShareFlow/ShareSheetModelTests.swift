@@ -6,12 +6,33 @@ import XCTest
 @MainActor
 final class ShareSheetModelTests: XCTestCase {
     private let url = URL(string: "https://www.example.com/article")!
+    private let did = "did:plc:alice"
+
+    // Each test gets its own uniquely-named directory under the system temp
+    // directory; nothing here relies on cleaning them up afterwards.
+    private func makeQueue() -> SaveQueue {
+        SaveQueue(directory: FileManager.default.temporaryDirectory.appendingPathComponent("ShareSheetModelTests-\(UUID().uuidString)"))
+    }
+
+    private func makeCache() -> CollectionsCache {
+        CollectionsCache(directory: FileManager.default.temporaryDirectory.appendingPathComponent("ShareSheetModelTests-cache-\(UUID().uuidString)"))
+    }
+
+    private func makeModel(
+        library: (any Library)?,
+        metadata: @escaping ShareSheetModel.MetadataLoader,
+        url: URL?,
+        did: String?,
+        collectionsCache: CollectionsCache? = nil
+    ) -> ShareSheetModel {
+        ShareSheetModel(library: library, metadata: metadata, url: url, did: did, queue: makeQueue(), collectionsCache: collectionsCache)
+    }
 
     // MARK: Loading
 
     func testLoadingWithNoURLLandsInNoURL() async {
         let library = FakeLibrary()
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: nil)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: nil, did: did)
 
         await model.load()
 
@@ -21,7 +42,7 @@ final class ShareSheetModelTests: XCTestCase {
     }
 
     func testLoadingWithoutALibraryLandsInNotSignedIn() async {
-        let model = ShareSheetModel(library: nil, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: nil, metadata: Self.previewLoader(), url: url, did: nil)
 
         await model.load()
 
@@ -31,10 +52,11 @@ final class ShareSheetModelTests: XCTestCase {
 
     func testMetadataFailureStillReachesReady() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        let model = ShareSheetModel(
+        let model = makeModel(
             library: library,
             metadata: { _ in throw TestError("metadata down") },
-            url: url
+            url: url,
+            did: did
         )
 
         await model.load()
@@ -59,7 +81,7 @@ final class ShareSheetModelTests: XCTestCase {
 
     func testSuccessfulLoadExposesPreviewAndCollections() async {
         let library = FakeLibrary(collections: [Self.collection("Reading"), Self.collection("Recipes")])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(title: "An article"), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(title: "An article"), url: url, did: did)
 
         await model.load()
         await awaitPreviewFetch(on: model)
@@ -69,13 +91,13 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertEqual(model.visibleCollections.map(\.name), ["Reading", "Recipes"])
     }
 
-    func testCollectionsFailureIsReportedAndRetryable() async {
+    func testAPermanentCollectionsFailureWithNoCacheIsReportedAndRetryable() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        library.collectionsError = TestError("Couldn't reach bsky.social")
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        library.collectionsError = XRPCError.server(status: 403, error: nil, message: "Your account isn't allowed to do that.")
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
 
         await model.load()
-        XCTAssertEqual(model.phase, .failed("Couldn't reach bsky.social"))
+        XCTAssertEqual(model.phase, .failed("Your account isn't allowed to do that."))
         XCTAssertFalse(model.showsForm)
         XCTAssertFalse(model.canSave)
 
@@ -85,12 +107,50 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertEqual(model.collections.map(\.name), ["Reading"])
     }
 
+    func testATransientCollectionsFailureWithNoCacheStillReachesReadyWithAnEmptyList() async {
+        let library = FakeLibrary()
+        library.collectionsError = URLError(.notConnectedToInternet)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
+
+        await model.load()
+
+        XCTAssertEqual(model.phase, .ready, "saving without collections must still work offline")
+        XCTAssertEqual(model.collections, [])
+        XCTAssertTrue(model.canSave)
+    }
+
+    func testOfflineLoadShowsCachedCollectionsInsteadOfFailing() async {
+        let cache = makeCache()
+        cache.save([Self.collection("Cached")], for: did)
+        let library = FakeLibrary()
+        library.collectionsError = URLError(.notConnectedToInternet)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did, collectionsCache: cache)
+
+        await model.load()
+
+        XCTAssertEqual(model.phase, .ready)
+        XCTAssertEqual(model.collections.map(\.name), ["Cached"])
+        XCTAssertFalse(model.canCreateCollection, "offline collection creation isn't supported")
+    }
+
+    func testASuccessfulLoadReplacesTheCache() async {
+        let cache = makeCache()
+        cache.save([Self.collection("Stale")], for: did)
+        let library = FakeLibrary(collections: [Self.collection("Fresh")])
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did, collectionsCache: cache)
+
+        await model.load()
+
+        XCTAssertEqual(model.collections.map(\.name), ["Fresh"])
+        XCTAssertEqual(cache.load(for: did)?.map(\.name), ["Fresh"])
+    }
+
     // MARK: Preview
 
     func testAPlainURLLoadsItsPreviewAutomatically() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
         let loader = CountingLoader(title: "An article")
-        let model = ShareSheetModel(library: library, metadata: loader.load, url: url)
+        let model = makeModel(library: library, metadata: loader.load, url: url, did: did)
 
         await model.load()
         let preview = await waitForPreview(model)
@@ -104,7 +164,7 @@ final class ShareSheetModelTests: XCTestCase {
         let sensitive = URL(string: "https://example.com/reset?token=secret")!
         let library = FakeLibrary(collections: [Self.collection("Reading")])
         let loader = CountingLoader(title: "An article")
-        let model = ShareSheetModel(library: library, metadata: loader.load, url: sensitive)
+        let model = makeModel(library: library, metadata: loader.load, url: sensitive, did: did)
 
         await model.load()
 
@@ -128,7 +188,7 @@ final class ShareSheetModelTests: XCTestCase {
             URL(string: "https://example.com/article#section")!,
             URL(string: "https://user:pass@example.com/article")!,
         ] {
-            let model = ShareSheetModel(library: library, metadata: loader.load, url: unsafe)
+            let model = makeModel(library: library, metadata: loader.load, url: unsafe, did: did)
             await model.load()
             XCTAssertTrue(model.previewAwaitingConfirmation, unsafe.absoluteString)
         }
@@ -137,13 +197,14 @@ final class ShareSheetModelTests: XCTestCase {
 
     func testASlowOrNeverReturningPreviewDoesNotDelayReady() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        let model = ShareSheetModel(
+        let model = makeModel(
             library: library,
             metadata: { url in
                 try await Task.sleep(nanoseconds: 300_000_000)
                 return URLPreview(url: url, title: "Late")
             },
-            url: url
+            url: url,
+            did: did
         )
 
         await model.load()
@@ -161,7 +222,7 @@ final class ShareSheetModelTests: XCTestCase {
         let reading = Self.collection("Reading")
         let recipes = Self.collection("Recipes")
         let library = FakeLibrary(collections: [reading, recipes])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(title: "An article"), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(title: "An article"), url: url, did: did)
         await model.load()
         await awaitPreviewFetch(on: model)
 
@@ -170,31 +231,32 @@ final class ShareSheetModelTests: XCTestCase {
         await model.save()
 
         XCTAssertEqual(model.phase, .saved)
-        let request = try XCTUnwrap(library.savedRequests.first)
+        let saved = try XCTUnwrap(library.savedRequests.first)
         XCTAssertEqual(library.savedRequests.count, 1)
-        XCTAssertEqual(request.url, url)
-        XCTAssertEqual(request.preview?.title, "An article")
-        XCTAssertEqual(request.note, "worth a second read")
-        XCTAssertEqual(request.collections, [recipes.ref])
+        XCTAssertEqual(saved.url, url)
+        XCTAssertEqual(saved.preview?.title, "An article")
+        XCTAssertEqual(saved.note, "worth a second read")
+        XCTAssertEqual(saved.collections, [recipes.ref])
+        XCTAssertEqual(saved.did, did)
     }
 
     func testSaveOmitsBlankNoteAndUnselectedCollections() async throws {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         model.note = "   \n"
         await model.save()
 
-        let request = try XCTUnwrap(library.savedRequests.first)
-        XCTAssertNil(request.note)
-        XCTAssertTrue(request.collections.isEmpty)
+        let saved = try XCTUnwrap(library.savedRequests.first)
+        XCTAssertNil(saved.note)
+        XCTAssertTrue(saved.collections.isEmpty)
     }
 
     func testToggleSelectsAndDeselects() async {
         let reading = Self.collection("Reading")
         let library = FakeLibrary(collections: [reading])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         model.toggle(reading)
@@ -205,28 +267,53 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertTrue(model.selected.isEmpty)
     }
 
-    func testSaveFailureExposesMessageAndAllowsRetry() async {
+    func testAPermanentSaveFailureExposesMessageAndRetryReusesTheSamePendingSave() async throws {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        library.saveError = TestError("The PDS said no")
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        library.saveError = SembleLibraryError.noteTooLong
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         await model.save()
 
-        XCTAssertEqual(model.phase, .failed("The PDS said no"))
+        XCTAssertEqual(model.phase, .failed("That note is too long to save — try trimming it."))
         XCTAssertTrue(model.showsForm, "the form stays available so the user can retry")
         XCTAssertTrue(model.canSave)
+        let firstAttempt = try XCTUnwrap(library.savedRequests.first)
 
         library.saveError = nil
         await model.retry()
 
         XCTAssertEqual(model.phase, .saved)
         XCTAssertEqual(library.savedRequests.count, 2)
+        XCTAssertEqual(library.savedRequests.last?.id, firstAttempt.id, "a retry reuses the same pending save rather than starting a fresh one")
+        XCTAssertEqual(library.savedRequests.last?.cardRkey, firstAttempt.cardRkey, "reusing the rkey is what makes the retry idempotent")
+    }
+
+    func testATransientSaveFailureEndsQueuedAndALaterDrainWritesItWithTheOriginalTapTime() async throws {
+        let library = FakeLibrary(collections: [Self.collection("Reading")])
+        library.saveError = URLError(.notConnectedToInternet)
+        let queue = makeQueue()
+        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url, did: did, queue: queue)
+        await model.load()
+        let beforeTap = Date()
+
+        await model.save()
+
+        XCTAssertEqual(model.phase, .queued)
+        let queuedAttempt = try XCTUnwrap(library.savedRequests.first)
+        XCTAssertGreaterThanOrEqual(queuedAttempt.savedAt, beforeTap)
+        XCTAssertLessThanOrEqual(queuedAttempt.savedAt, Date())
+
+        library.saveError = nil
+        await queue.drain(for: did, using: library)
+
+        XCTAssertEqual(library.savedRequests.count, 2)
+        XCTAssertEqual(library.savedRequests.last?.savedAt, queuedAttempt.savedAt, "the drain must write the original tap time, not the sync time")
     }
 
     func testSaveIsIgnoredBeforeLoading() async {
         let library = FakeLibrary()
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
 
         await model.save()
 
@@ -238,7 +325,7 @@ final class ShareSheetModelTests: XCTestCase {
 
     func testCreateOptionAppearsOnlyForAnUnmatchedNonEmptyQuery() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         model.query = ""
@@ -262,7 +349,7 @@ final class ShareSheetModelTests: XCTestCase {
 
     func testCreateCollectionSelectsTheNewCollectionAndClearsTheQuery() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         model.query = "  Cooking "
@@ -283,7 +370,7 @@ final class ShareSheetModelTests: XCTestCase {
     func testCreateCollectionFailureIsReportedInline() async {
         let library = FakeLibrary(collections: [])
         library.createError = TestError("Couldn't create the collection")
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         model.query = "Cooking"
@@ -297,7 +384,7 @@ final class ShareSheetModelTests: XCTestCase {
 
     func testCreateCollectionIsIgnoredWhenNotOffered() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
-        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url)
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
 
         model.query = "reading"
@@ -338,54 +425,6 @@ final class ShareSheetModelTests: XCTestCase {
 }
 
 // MARK: - Test doubles
-
-/// A scripted `Library`: serves canned collections, records saves, and can be
-/// told to fail any call.
-private final class FakeLibrary: Library, @unchecked Sendable {
-    var collections: [CollectionSummary]
-    var collectionsError: Error?
-    var createError: Error?
-    var saveError: Error?
-
-    private(set) var collectionsRequests = 0
-    private(set) var createdCollections: [CollectionSummary] = []
-    private(set) var savedRequests: [SaveRequest] = []
-
-    init(collections: [CollectionSummary] = []) {
-        self.collections = collections
-    }
-
-    func myCollections() async throws -> [CollectionSummary] {
-        collectionsRequests += 1
-        if let collectionsError { throw collectionsError }
-        return collections
-    }
-
-    func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary {
-        if let createError { throw createError }
-        let rkey = "new\(createdCollections.count + 1)"
-        let created = CollectionSummary(
-            ref: StrongRef(uri: "at://did:plc:alice/network.cosmik.collection/\(rkey)", cid: "bafy\(rkey)"),
-            name: name,
-            accessType: accessType,
-            description: nil
-        )
-        createdCollections.append(created)
-        collections.insert(created, at: 0)
-        return created
-    }
-
-    func save(_ request: SaveRequest) async throws -> SaveResult {
-        savedRequests.append(request)
-        if let saveError { throw saveError }
-        let card = StrongRef(uri: "at://did:plc:alice/network.cosmik.card/card1", cid: "bafycard1")
-        let note = request.note.map { _ in StrongRef(uri: "at://did:plc:alice/network.cosmik.card/note1", cid: "bafynote1") }
-        let links = request.collections.enumerated().map { index, _ in
-            StrongRef(uri: "at://did:plc:alice/network.cosmik.collectionLink/link\(index)", cid: "bafylink\(index)")
-        }
-        return SaveResult(card: card, note: note, collectionLinks: links)
-    }
-}
 
 private struct TestError: LocalizedError {
     let message: String

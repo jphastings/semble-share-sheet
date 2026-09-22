@@ -228,6 +228,26 @@ final class PDSClientTests: XCTestCase {
         XCTAssertEqual((body["record"] as? [String: Any])?["$type"] as? String, "app.example.record")
     }
 
+    func test_createRecordSendsTheGivenRkey() async throws {
+        stub.on(Self.createRecord, json: Self.strongRefJSON)
+        let client = makeClient(session: session())
+
+        _ = try await client.createRecord(collection: "app.example.record", record: TestRecord(text: "hi"), rkey: "3kabc")
+
+        let body = jsonFields(of: try XCTUnwrap(stub.requests(to: Self.createRecord).last))
+        XCTAssertEqual(body["rkey"] as? String, "3kabc")
+    }
+
+    func test_createRecordOmitsRkeyWhenNotGiven() async throws {
+        stub.on(Self.createRecord, json: Self.strongRefJSON)
+        let client = makeClient(session: session())
+
+        _ = try await client.createRecord(collection: "app.example.record", record: TestRecord(text: "hi"))
+
+        let body = jsonFields(of: try XCTUnwrap(stub.requests(to: Self.createRecord).last))
+        XCTAssertNil(body["rkey"], "the PDS should assign the key when none is given")
+    }
+
     func test_listRecordsDecodesRecordsAndCursor() async throws {
         stub.on(Self.listRecords, json: """
         {"records": [

@@ -23,6 +23,10 @@ public final class ShareSheetModel: ObservableObject {
         case saving
         /// The save succeeded; the host should dismiss shortly.
         case saved
+        /// The device (or the PDS) couldn't be reached; the save is queued
+        /// on disk and will go out the next time something drains the queue.
+        /// The host dismisses this the same way it dismisses `.saved`.
+        case queued
         /// Loading or saving failed. The message is user-presentable.
         case failed(String)
         /// No `Session` was found; the user has to sign in through the app.
@@ -56,12 +60,19 @@ public final class ShareSheetModel: ObservableObject {
     @Published public private(set) var isCreatingCollection = false
     /// A user-presentable message when creating a collection failed. Cleared on the next attempt.
     @Published public private(set) var collectionError: String?
+    /// True once a collections refresh has failed and the picker is showing
+    /// stale (or empty) data. Creating a collection needs a live PDS
+    /// round-trip, so it's disabled until the next successful refresh.
+    @Published public private(set) var collectionsRefreshFailed = false
 
     /// The URL being saved, or `nil` when the host shared nothing usable.
     public let url: URL?
 
     private let library: (any Library)?
     private let metadata: MetadataLoader
+    private let did: String?
+    private let queue: SaveQueue
+    private let collectionsCache: CollectionsCache?
 
     /// Set once collections have been fetched successfully; from then on a
     /// failure means a *save* failed and the form stays available for retry.
@@ -74,15 +85,34 @@ public final class ShareSheetModel: ObservableObject {
 
     private var failedStep: FailedStep = .load
 
+    /// The save in progress, kept across attempts so a retry after a
+    /// permanent failure reuses the same id and rkeys — the point of which
+    /// is that repeating the write is safe — rather than starting a fresh
+    /// one every tap.
+    private var pendingSave: PendingSave?
+
     /// - Parameters:
     ///   - library: The signed-in user's Semble library, or `nil` when there is
     ///     no session (the sheet then shows `Phase.notSignedIn`).
     ///   - metadata: Fetches a `URLPreview`; failures are swallowed.
     ///   - url: The shared URL, or `nil` when none could be found.
-    public init(library: (any Library)?, metadata: @escaping MetadataLoader, url: URL?) {
+    ///   - did: The signed-in user's DID, so a save can be queued against it. `nil` alongside `library == nil`.
+    ///   - queue: Where a save that can't reach the PDS right away is kept until something drains it.
+    ///   - collectionsCache: Shows a cached collection list before (or instead of) a network fetch. `nil` skips caching.
+    public init(
+        library: (any Library)?,
+        metadata: @escaping MetadataLoader,
+        url: URL?,
+        did: String?,
+        queue: SaveQueue,
+        collectionsCache: CollectionsCache? = nil
+    ) {
         self.library = library
         self.metadata = metadata
         self.url = url
+        self.did = did
+        self.queue = queue
+        self.collectionsCache = collectionsCache
     }
 
     // MARK: Derived state
@@ -111,9 +141,11 @@ public final class ShareSheetModel: ObservableObject {
     }
 
     /// True when the query names a collection that doesn't exist yet, so the
-    /// picker should offer a "Create new collection" row.
+    /// picker should offer a "Create new collection" row. Offline collection
+    /// creation isn't supported, so this is also `false` whenever the last
+    /// refresh failed (the list on screen may be stale or empty).
     public var canCreateCollection: Bool {
-        guard library != nil, hasLoaded, !isCreatingCollection else { return false }
+        guard library != nil, hasLoaded, !isCreatingCollection, !collectionsRefreshFailed else { return false }
         let name = creationName
         guard !name.isEmpty else { return false }
         return !collections.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
@@ -122,7 +154,7 @@ public final class ShareSheetModel: ObservableObject {
     /// True when the form should be shown (as opposed to a full-screen status).
     public var showsForm: Bool {
         switch phase {
-        case .ready, .saving, .saved:
+        case .ready, .saving, .saved, .queued:
             return true
         case .failed:
             return hasLoaded
@@ -133,13 +165,13 @@ public final class ShareSheetModel: ObservableObject {
 
     /// True when tapping "Add to Semble" would do something.
     public var canSave: Bool {
-        guard library != nil, url != nil, hasLoaded else { return false }
+        guard library != nil, url != nil, did != nil, hasLoaded else { return false }
         switch phase {
         case .ready:
             return true
         case .failed:
             return failedStep == .save
-        case .loading, .saving, .saved, .notSignedIn, .noURL:
+        case .loading, .saving, .saved, .queued, .notSignedIn, .noURL:
             return false
         }
     }
@@ -148,9 +180,13 @@ public final class ShareSheetModel: ObservableObject {
 
     /// Fetches the user's collections and, for URLs safe to preview without
     /// asking first, the URL preview. Safe to call again after a load
-    /// failure. Ready as soon as collections have loaded; the preview (when
-    /// it isn't waiting on `loadPreview()`) is filled in independently and
-    /// never delays this.
+    /// failure. If a cached collection list exists it's shown immediately
+    /// (`.ready` straight away) while the network fetch replaces it in the
+    /// background; a transient refresh failure leaves the cache (or an empty
+    /// list, offline with nothing cached) on screen rather than failing the
+    /// whole sheet — saving without collections has to work offline. The
+    /// preview (when it isn't waiting on `loadPreview()`) is filled in
+    /// independently and never delays this.
     public func load() async {
         guard let library else {
             phase = .notSignedIn
@@ -160,7 +196,14 @@ public final class ShareSheetModel: ObservableObject {
             phase = .noURL
             return
         }
-        phase = .loading
+
+        if let did, let cached = collectionsCache?.load(for: did) {
+            collections = cached
+            hasLoaded = true
+            phase = .ready
+        } else {
+            phase = .loading
+        }
 
         if url.isSafeToPreviewAutomatically {
             fetchPreview(for: url)
@@ -172,13 +215,28 @@ public final class ShareSheetModel: ObservableObject {
             let fetched = try await library.myCollections()
             collections = fetched
             hasLoaded = true
+            collectionsRefreshFailed = false
+            if let did {
+                collectionsCache?.save(fetched, for: did)
+            }
+            phase = .ready
         } catch {
+            collectionsRefreshFailed = true
+            if hasLoaded {
+                // Already showing something usable (cache, or an earlier
+                // successful load); a refresh failure doesn't take that away.
+                return
+            }
+            guard isPermanentFailure(error) else {
+                // Nothing cached and the network is the problem, not the
+                // request: still usable, just with an empty picker.
+                hasLoaded = true
+                phase = .ready
+                return
+            }
             failedStep = .load
             phase = .failed(error.localizedDescription)
-            return
         }
-
-        phase = .ready
     }
 
     /// Fetches the preview for a URL that needed confirmation first. No-op if
@@ -234,27 +292,52 @@ public final class ShareSheetModel: ObservableObject {
         }
     }
 
-    /// Writes the card (plus note and collection links) to the user's PDS.
-    /// No-op unless `canSave`. On failure the form stays editable and
-    /// `save()` can simply be called again.
+    /// Builds (or updates) the pending save, enqueues it, and tries to write
+    /// it right away — claiming it exactly like any other drain would. No-op
+    /// unless `canSave`.
+    ///
+    /// - A reachable PDS: `.saved`, and the queued file is gone.
+    /// - Unreachable (or a 401/429/5xx): `.queued`; the item stays on disk
+    ///   for the next drain and the host dismisses the sheet regardless.
+    /// - A permanent failure (bad URL, note too long, a 4xx that isn't a
+    ///   session problem): `.failed`, and the item is removed from the queue
+    ///   — the user is looking at the message right here and a retry
+    ///   re-enqueues the same `PendingSave`.
     public func save() async {
-        guard canSave, let library, let url else { return }
+        guard canSave, let library, let url, let did else { return }
         phase = .saving
 
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        let request = SaveRequest(
-            url: url,
-            preview: preview,
-            note: trimmedNote.isEmpty ? nil : trimmedNote,
-            collections: selectedCollections.map(\.ref)
-        )
+        let noteText = trimmedNote.isEmpty ? nil : trimmedNote
+        let collectionRefs = selectedCollections.map(\.ref)
+
+        var pending = pendingSave ?? PendingSave(did: did, url: url, preview: preview, note: noteText, collections: collectionRefs)
+        pending.note = noteText
+        pending.collections = collectionRefs
+        pending.ensureLinkRkeys()
+        pendingSave = pending
 
         do {
-            _ = try await library.save(request)
-            phase = .saved
+            try queue.enqueue(pending)
         } catch {
+            // ponytail: a queue write failure (disk full, no space left) is
+            // reported like any other save failure rather than retried —
+            // there's no fallback path for "couldn't even get it onto disk".
             failedStep = .save
             phase = .failed(error.localizedDescription)
+            return
+        }
+
+        switch await queue.attempt(pending, using: library) {
+        case .saved:
+            pendingSave = nil
+            phase = .saved
+        case .queued:
+            phase = .queued
+        case let .failed(message):
+            queue.remove(pending.id)
+            failedStep = .save
+            phase = .failed(message)
         }
     }
 

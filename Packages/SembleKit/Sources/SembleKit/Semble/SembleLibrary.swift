@@ -21,17 +21,6 @@ public actor SembleLibrary: Library {
     /// (cosmik-network/semble, src/modules/atproto/infrastructure/lexicons/card.json).
     private static let noteMaxLength = 10_000
 
-    /// What a `save()` for a given URL has written so far. Remembered across
-    /// a failure so a retry resumes instead of writing a second public card.
-    private struct SaveProgress {
-        var card: StrongRef?
-        var note: StrongRef?
-        var linkedCollections: [String: StrongRef] = [:]
-    }
-
-    /// Keyed by the request's URL; cleared once that URL's save succeeds.
-    private var inProgressSaves: [URL: SaveProgress] = [:]
-
     public init(pds: PDSClient, configuration: SembleConfiguration = .production) {
         self.store = pds
         self.configuration = configuration
@@ -101,81 +90,84 @@ public actor SembleLibrary: Library {
             updatedAt: timestamp,
             configuration: configuration
         )
-        let ref = try await store.createRecord(collection: configuration.collectionCollection, record: record)
+        let ref = try await store.createRecord(collection: configuration.collectionCollection, record: record, rkey: nil)
         return CollectionSummary(ref: ref, name: trimmedName, accessType: accessType, description: nil)
     }
 
     // MARK: - Saving
 
-    /// Writes the card, note and collection links for `request` in order. If
-    /// a previous attempt for the same URL got partway through, this resumes
-    /// from there instead of writing a second (public) card.
-    public func save(_ request: SaveRequest) async throws -> SaveResult {
-        guard let scheme = request.url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-            throw SembleLibraryError.unsupportedURL(request.url)
+    /// Writes the card, note and collection links for `pending`, in order,
+    /// using the rkeys it was created with. Every write goes through
+    /// `createIdempotently`, so calling this more than once for the same
+    /// `PendingSave` — a retry, a drain racing a retry, two drains racing
+    /// each other — writes each record at most once.
+    public func save(_ pending: PendingSave) async throws -> SaveResult {
+        guard let scheme = pending.url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            throw SembleLibraryError.unsupportedURL(pending.url)
         }
 
-        let noteText = request.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        var progress = inProgressSaves[request.url] ?? SaveProgress()
-
-        // Validate before writing anything, so an over-long note can't
-        // strand a card that was already written. Once a note has been
-        // written for this URL there's nothing left to strand, so a later
-        // edit that's too long is only checked if it would still be written.
-        if progress.note == nil, let noteText, noteText.utf8.count > Self.noteMaxLength {
+        let noteText = pending.note?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        if let noteText, noteText.utf8.count > Self.noteMaxLength {
             throw SembleLibraryError.noteTooLong
         }
 
-        let timestamp = now()
+        let timestamp = pending.savedAt
 
+        // 1. The URL card. Everything else points at it.
+        let card = CardRecord.url(pending.url, preview: pending.preview, createdAt: timestamp, configuration: configuration)
+        let cardRef = try await createIdempotently(collection: configuration.cardCollection, record: card, rkey: pending.cardRkey)
+
+        // 2. The note, if there is one worth keeping.
+        // ponytail: a note edited after the first (failed) attempt is
+        // silently dropped — the retry reuses `noteRkey`, so an
+        // already-written note is adopted as-is rather than replaced. Editing
+        // a queued save's note before it syncs isn't supported yet; per-save
+        // note versioning would fix that if it turns out to matter.
+        var noteRef: StrongRef?
+        if let noteText {
+            let note = CardRecord.note(text: noteText, about: pending.url, parent: cardRef, createdAt: timestamp, configuration: configuration)
+            noteRef = try await createIdempotently(collection: configuration.cardCollection, record: note, rkey: pending.noteRkey)
+        }
+
+        // 3. One link per chosen collection.
+        var linkRefs: [StrongRef] = []
+        if !pending.collections.isEmpty {
+            let did = await store.did
+            for collection in pending.collections {
+                // `PendingSave.ensureLinkRkeys()` keeps this populated for
+                // every selected collection; a missing entry would mean the
+                // caller mutated `collections` without calling it.
+                guard let linkRkey = pending.linkRkeys[collection.uri] else { continue }
+                let link = CollectionLinkRecord(
+                    collection: collection,
+                    card: cardRef,
+                    addedBy: did,
+                    addedAt: timestamp,
+                    createdAt: timestamp,
+                    configuration: configuration
+                )
+                let linkRef = try await createIdempotently(collection: configuration.collectionLinkCollection, record: link, rkey: linkRkey)
+                linkRefs.append(linkRef)
+            }
+        }
+
+        return SaveResult(card: cardRef, note: noteRef, collectionLinks: linkRefs)
+    }
+
+    /// Creates `record` at `rkey`, or — if the PDS rejects it, which is what
+    /// happens on a repeat attempt, though the reference PDS doesn't
+    /// reliably say "already exists" rather than some other server error —
+    /// fetches whatever is already at that key and adopts it. A connectivity
+    /// failure (not a `server` error) is rethrown directly: there's nothing
+    /// at `rkey` to adopt yet.
+    private func createIdempotently<R: Encodable & Decodable>(collection: String, record: R, rkey: String) async throws -> StrongRef {
         do {
-            // 1. The URL card. Everything else points at it.
-            let cardRef: StrongRef
-            if let existingCard = progress.card {
-                cardRef = existingCard
-            } else {
-                let card = CardRecord.url(request.url, preview: request.preview, createdAt: timestamp, configuration: configuration)
-                cardRef = try await store.createRecord(collection: configuration.cardCollection, record: card)
-                progress.card = cardRef
+            return try await store.createRecord(collection: collection, record: record, rkey: rkey)
+        } catch let error as XRPCError {
+            guard case .server = error else { throw error }
+            if let existing: RecordEnvelope<R> = try? await store.getRecord(collection: collection, rkey: rkey) {
+                return existing.ref
             }
-
-            // 2. The note, if there is one worth keeping and one wasn't
-            // already written by an earlier attempt.
-            // ponytail: an edited note is silently dropped once the original
-            // has been written for this URL; per-attempt note versioning
-            // would fix that if it turns out to matter in practice.
-            if progress.note == nil, let noteText {
-                let note = CardRecord.note(text: noteText, about: request.url, parent: cardRef, createdAt: timestamp, configuration: configuration)
-                progress.note = try await store.createRecord(collection: configuration.cardCollection, record: note)
-            }
-
-            // 3. One link per chosen collection not already linked.
-            var linkRefs: [StrongRef] = []
-            if !request.collections.isEmpty {
-                let did = await store.did
-                for collection in request.collections {
-                    if let existingLink = progress.linkedCollections[collection.uri] {
-                        linkRefs.append(existingLink)
-                        continue
-                    }
-                    let link = CollectionLinkRecord(
-                        collection: collection,
-                        card: cardRef,
-                        addedBy: did,
-                        addedAt: timestamp,
-                        createdAt: timestamp,
-                        configuration: configuration
-                    )
-                    let linkRef = try await store.createRecord(collection: configuration.collectionLinkCollection, record: link)
-                    progress.linkedCollections[collection.uri] = linkRef
-                    linkRefs.append(linkRef)
-                }
-            }
-
-            inProgressSaves[request.url] = nil
-            return SaveResult(card: cardRef, note: progress.note, collectionLinks: linkRefs)
-        } catch {
-            inProgressSaves[request.url] = progress
             throw error
         }
     }

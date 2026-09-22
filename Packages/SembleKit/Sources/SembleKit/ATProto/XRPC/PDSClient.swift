@@ -61,9 +61,12 @@ public actor PDSClient {
 
     // MARK: - Records
 
-    /// `com.atproto.repo.createRecord`. The PDS assigns the record key.
-    public func createRecord<R: Encodable>(collection: String, record: R) async throws -> StrongRef {
-        let input = CreateRecordInput(repo: did, collection: collection, record: record)
+    /// `com.atproto.repo.createRecord`. The PDS assigns the record key
+    /// unless `rkey` is given, which is how a caller makes the write
+    /// idempotent: retrying with the same `rkey` either creates the record
+    /// once or fails with "already exists" for every attempt after the first.
+    public func createRecord<R: Encodable>(collection: String, record: R, rkey: String? = nil) async throws -> StrongRef {
+        let input = CreateRecordInput(repo: did, collection: collection, record: record, rkey: rkey)
         let response = try await post("com.atproto.repo.createRecord", body: input)
         return try decode(StrongRef.self, from: response)
     }
@@ -256,6 +259,9 @@ struct CreateRecordInput<Record: Encodable>: Encodable {
     let repo: String
     let collection: String
     let record: Record
+    /// Omitted from the body entirely when `nil` (the synthesized
+    /// `Encodable` conformance skips `nil` optionals).
+    var rkey: String?
 }
 
 struct DeleteRecordInput: Encodable {

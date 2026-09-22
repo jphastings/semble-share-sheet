@@ -6,8 +6,9 @@ import Foundation
 protocol RecordStore: Sendable {
     /// The DID of the repository being written to (the signed-in user).
     var did: String { get async }
-    func createRecord<R: Encodable>(collection: String, record: R) async throws -> StrongRef
+    func createRecord<R: Encodable>(collection: String, record: R, rkey: String?) async throws -> StrongRef
     func listRecords<R: Decodable>(collection: String, limit: Int, cursor: String?) async throws -> RecordPage<R>
+    func getRecord<R: Decodable>(collection: String, rkey: String) async throws -> RecordEnvelope<R>
 }
 
 extension PDSClient: RecordStore {}

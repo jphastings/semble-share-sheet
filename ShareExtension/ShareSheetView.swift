@@ -26,8 +26,9 @@ struct ShareSheetView: View {
             await model.load()
         }
         .onChange(of: model.phase) { _, phase in
-            guard phase == .saved else { return }
-            // Let the checkmark register, then hand back to the host app.
+            guard phase == .saved || phase == .queued else { return }
+            // Let the checkmark (or the queued glyph) register, then hand
+            // back to the host app.
             Task {
                 try? await Task.sleep(nanoseconds: 800_000_000)
                 onComplete()
@@ -44,7 +45,7 @@ struct ShareSheetView: View {
             Button("Cancel", action: onCancel)
                 .font(.body)
                 .foregroundStyle(Color.sembleMutedText)
-                .disabled(model.phase == .saving || model.phase == .saved)
+                .disabled(model.phase == .saving || model.phase == .saved || model.phase == .queued)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -104,6 +105,18 @@ struct ShareSheetView: View {
                     .foregroundStyle(Color.sembleOrange)
                 Text("Saved to Semble")
                     .font(.title3.weight(.semibold))
+            }
+        case .queued:
+            // Deliberate placeholder pending a real design pass (SEMBLE-16dh):
+            // same layout as `.saved`, a muted "will arrive later" glyph
+            // instead of the checkmark, no further explanation.
+            status {
+                Image(systemName: "icloud.and.arrow.up")
+                    .font(.system(size: 56))
+                    .foregroundStyle(Color.sembleMutedText)
+                Text("Saved — will add when you're online")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityLabel("Saved. It will be added to Semble once you're back online.")
             }
         case .ready, .saving, .failed:
             form
