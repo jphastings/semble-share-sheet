@@ -1,14 +1,16 @@
 import Foundation
 @testable import SembleKit
 
-/// An in-memory `RecordStore`. Records every write as `(collection, JSON)`
-/// in order and hands back deterministic strong refs
-/// (`at://did:plc:test/<collection>/<n>`), so tests can assert on what was
-/// written and in which order. `listRecords` serves canned pages keyed by
-/// cursor.
+/// An in-memory `RecordStore`. Records every write as `(collection, rkey,
+/// JSON)` in order and hands back deterministic strong refs
+/// (`at://did:plc:test/<collection>/<rkey>`), so tests can assert on what was
+/// written and in which order. A duplicate `rkey` in the same collection is
+/// rejected the way a real PDS rejects it: an `XRPCError.server`.
+/// `listRecords` serves canned pages keyed by cursor.
 final class FakeRecordStore: RecordStore, @unchecked Sendable {
     struct Write {
         let collection: String
+        let rkey: String
         let data: Data
 
         /// The written record as a JSON object, for assertions on keys.
@@ -45,6 +47,8 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
     private(set) var listCalls: [ListCall] = []
     /// Pages keyed by the cursor that requests them; the first page's key is `""`.
     private var pages: [String: CannedPage] = [:]
+    /// Every record ever accepted, keyed by `"<collection>/<rkey>"`, for `getRecord`.
+    private var recordsByKey: [String: (uri: String, cid: String, data: Data)] = [:]
     /// When set, `createRecord` throws this. Every call throws unless
     /// `createErrorAtCall` narrows it to one specific attempt.
     var createError: Error?
@@ -66,7 +70,7 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
         lock.withLock { pages[cursor ?? ""] = page }
     }
 
-    func createRecord<R: Encodable>(collection: String, record: R) async throws -> StrongRef {
+    func createRecord<R: Encodable>(collection: String, record: R, rkey: String?) async throws -> StrongRef {
         let callNumber = lock.withLock { () -> Int in
             createCallCount += 1
             return createCallCount
@@ -75,11 +79,27 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
             throw createError
         }
         let data = try JSONEncoder().encode(record)
-        return lock.withLock { () -> StrongRef in
-            writes.append(Write(collection: collection, data: data))
-            let n = writes.count
-            return StrongRef(uri: "at://did:plc:test/\(collection)/\(n)", cid: "bafy\(n)")
+        return try lock.withLock { () throws -> StrongRef in
+            let resolvedRkey = rkey ?? "\(writes.count + 1)"
+            let key = "\(collection)/\(resolvedRkey)"
+            if let rkey, recordsByKey[key] != nil {
+                throw XRPCError.server(status: 400, error: "InvalidSwap", message: "Record already exists at \(rkey)")
+            }
+            let uri = "at://did:plc:test/\(collection)/\(resolvedRkey)"
+            let cid = "bafy\(writes.count + 1)"
+            writes.append(Write(collection: collection, rkey: resolvedRkey, data: data))
+            recordsByKey[key] = (uri: uri, cid: cid, data: data)
+            return StrongRef(uri: uri, cid: cid)
         }
+    }
+
+    func getRecord<R: Decodable>(collection: String, rkey: String) async throws -> RecordEnvelope<R> {
+        let stored = lock.withLock { recordsByKey["\(collection)/\(rkey)"] }
+        guard let stored else {
+            throw XRPCError.server(status: 404, error: "RecordNotFound", message: nil)
+        }
+        let value = try JSONDecoder().decode(R.self, from: stored.data)
+        return RecordEnvelope(uri: stored.uri, cid: stored.cid, value: value)
     }
 
     func listRecords<R: Decodable>(collection: String, limit: Int, cursor: String?) async throws -> RecordPage<R> {

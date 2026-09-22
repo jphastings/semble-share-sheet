@@ -45,7 +45,11 @@ committed.
    non-fatal.
 4. It lists the user's `network.cosmik.collection` records from their PDS
    (`com.atproto.repo.listRecords`) to populate the collection picker.
-5. On **Add**, it creates, in order:
+5. On **Add**, it builds a `PendingSave` (the URL, note, chosen collections
+   and a client-chosen ATProto TID rkey for each record it will write),
+   enqueues it in the app-group `SaveQueue`, and tries it immediately. If the
+   PDS is unreachable the item stays queued and the sheet still dismisses;
+   nothing is lost. Writing a `PendingSave` creates, in order:
    - a `network.cosmik.card` record of type `URL`;
    - if a note was entered, a `network.cosmik.card` record of type `NOTE`
      whose `parentCard` is a strong ref to the URL card;
@@ -53,7 +57,17 @@ committed.
      holding strong refs to the collection and the card.
 
    Any collection the user creates from the picker becomes a
-   `network.cosmik.collection` record first.
+   `network.cosmik.collection` record first (offline collection creation
+   isn't supported yet).
+
+   Because every record is created with its rkey chosen up front, writing the
+   same `PendingSave` twice — a retry, or a drain racing a retry — is safe:
+   `SembleLibrary` treats a rejected create at an already-used rkey as
+   "already written" and adopts the existing record instead of duplicating
+   it. The share extension can die the moment its sheet closes, so nothing
+   about this relies on the process surviving; the app (on foreground) and
+   the extension (on open) both drain whatever is left in the queue for the
+   signed-in DID.
 
 Record shapes mirror the lexicons in
 [cosmik-network/semble](https://github.com/cosmik-network/semble/tree/main/src/modules/atproto/infrastructure/lexicons)
@@ -138,14 +152,24 @@ public struct RecordPage<Record: Decodable> { records: [RecordEnvelope<Record>];
 /// proof and `Authorization` header, retries on `use_dpop_nonce`, refreshes
 /// an expired access token and writes the rotated session back to the
 /// store. It never opens a browser; a dead refresh token surfaces as
-/// `OAuthError.sessionExpired` and the stored session is cleared.
+/// `OAuthError.sessionExpired` and the stored session is cleared. A dropped
+/// connection surfaces as a plain `URLError` — nothing here wraps it.
 public actor PDSClient {
     public init(session: Session, sessionStore: SessionStore, configuration: OAuthClientConfiguration, http: HTTPClient = URLSessionHTTPClient())
     public var did: String { get async }
-    public func createRecord<R: Encodable>(collection: String, record: R) async throws -> StrongRef
+    /// `rkey` is omitted from the request when `nil` (the PDS assigns the
+    /// key); passing one makes the write idempotent — see `TID`.
+    public func createRecord<R: Encodable>(collection: String, record: R, rkey: String? = nil) async throws -> StrongRef
     public func listRecords<R: Decodable>(collection: String, limit: Int = 100, cursor: String? = nil) async throws -> RecordPage<R>
     public func getRecord<R: Decodable>(collection: String, rkey: String) async throws -> RecordEnvelope<R>
     public func deleteRecord(collection: String, rkey: String) async throws
+}
+
+/// ATProto Timestamp Identifiers: 13-character, base32-sortable, k-sortable
+/// record keys. `SembleLibrary` mints one per record so every write it makes
+/// is idempotent.
+public enum TID {
+    public static func next(now: Date = Date()) -> String
 }
 
 public enum OAuthError: LocalizedError { sessionExpired, issuerMismatch, subjectMismatch, discoveryFailed(String) … }
@@ -180,7 +204,20 @@ public struct URLMetadataClient {
     public func preview(for url: URL) async throws -> URLPreview
 }
 
-public struct SaveRequest { url: URL; preview: URLPreview?; note: String?; collections: [StrongRef] }
+/// Persisted intent to save a URL: everything `Library.save(_:)` needs, plus
+/// the rkeys chosen for it, so writing it twice is safe. `savedAt` is the
+/// moment the user tapped Save — it becomes every record's
+/// `createdAt`/`addedAt`, not the time the write actually reaches the PDS.
+public struct PendingSave: Codable, Equatable, Sendable {
+    public let id: UUID; public let did: String
+    public var url: URL; public var preview: URLPreview?; public var note: String?
+    public var collections: [StrongRef]; public let savedAt: Date
+    public var cardRkey: String; public var noteRkey: String; public var linkRkeys: [String: String]
+    public init(id: UUID = UUID(), did: String, url: URL, preview: URLPreview? = nil, note: String? = nil, collections: [StrongRef] = [], savedAt: Date = Date(), cardRkey: String? = nil, noteRkey: String? = nil, linkRkeys: [String: String] = [:])
+    /// Mints an rkey for any collection in `collections` that doesn't have
+    /// one yet; existing ones are left alone.
+    public mutating func ensureLinkRkeys()
+}
 public struct SaveResult { card: StrongRef; note: StrongRef?; collectionLinks: [StrongRef] }
 
 /// What the share sheet needs from Semble. A protocol so the UI can be
@@ -188,7 +225,10 @@ public struct SaveResult { card: StrongRef; note: StrongRef?; collectionLinks: [
 public protocol Library: Sendable {
     func myCollections() async throws -> [CollectionSummary]
     func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary
-    func save(_ request: SaveRequest) async throws -> SaveResult
+    /// Safe to call more than once for the same `PendingSave`: its rkeys
+    /// make every write idempotent, so a retry or a drain racing a retry
+    /// never duplicates a record.
+    func save(_ pending: PendingSave) async throws -> SaveResult
 }
 
 public actor SembleLibrary: Library {
@@ -198,6 +238,57 @@ public actor SembleLibrary: Library {
 // Record types (Codable, `$type` included), used by SembleLibrary and tests:
 public struct CardRecord, CollectionRecord, CollectionLinkRecord
 ```
+
+### Offline saves
+
+```swift
+/// One JSON file per pending save in the app-group container. A file's
+/// extension is its state: `<id>.json` queued, `<id>.inflight` claimed by
+/// whichever process is currently trying it (an atomic rename, so two
+/// processes racing to claim the same item can't both win), `<id>.failed`
+/// given up on (a permanent failure found during a drain — there's no
+/// app-side list to show it yet).
+public final class SaveQueue {
+    public init(directory: URL)
+    public func enqueue(_ pending: PendingSave) throws
+    public func remove(_ id: UUID)
+    enum Attempt: Equatable { case saved, queued, failed(String) }
+    /// Claims and tries `pending` once, right away. A permanent failure
+    /// removes the item (the caller is showing the error live); a
+    /// transient one releases the claim so the item stays queued.
+    @discardableResult func attempt(_ pending: PendingSave, using library: any Library) async -> Attempt
+    /// Tries every item queued for `did`; another DID's items are left
+    /// completely untouched. A permanent failure is parked as `.failed`.
+    func drain(for did: String, using library: any Library) async
+}
+
+/// The last-known collection list per DID, cached in the app-group container
+/// so the picker has something to show before (or instead of) a network
+/// round trip.
+public final class CollectionsCache {
+    public init(directory: URL)
+    public func load(for did: String) -> [CollectionSummary]?
+    public func save(_ collections: [CollectionSummary], for did: String)
+}
+```
+
+`ShareSheetModel.save()` builds a `PendingSave`, enqueues it, and calls
+`SaveQueue.attempt` right away — claiming it exactly like any other drain
+would, so the share extension's own save and a background drain can never
+both write the same item. A reachable PDS ends `.saved`; an unreachable one
+ends a new `.queued` phase (the sheet still dismisses; the item stays on
+disk); a permanent failure (bad URL, note too long, a non-session 4xx) ends
+`.failed` as before, with the item removed from the queue — the user is
+looking at the message and a retry re-enqueues the same `PendingSave`.
+`ShareSheetModel.load()` shows a cached collection list immediately if one
+exists, then replaces it from the network; a transient refresh failure
+leaves the cache (or an empty list) on screen instead of failing the sheet,
+since saving without collections has to work offline.
+
+Who drains: the share extension, in the background as its sheet opens
+(before/alongside its own save); the app, when `scenePhase` becomes
+`.active` while signed in. Both go through the same `SaveQueue`, keyed by
+the app group, so either can pick up what the other left behind.
 
 ## Errors
 

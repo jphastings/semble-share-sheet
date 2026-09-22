@@ -9,7 +9,7 @@ public enum CollectionAccessType: String, Codable, CaseIterable, Sendable {
 
 /// A collection as the picker needs it: enough to show it and to link a card
 /// to it. `ref` is the strong ref a `CollectionLinkRecord` must carry.
-public struct CollectionSummary: Identifiable, Hashable, Sendable {
+public struct CollectionSummary: Identifiable, Hashable, Sendable, Codable {
     public var id: String { ref.uri }
     public let ref: StrongRef
     public let name: String
@@ -21,25 +21,6 @@ public struct CollectionSummary: Identifiable, Hashable, Sendable {
         self.name = name
         self.accessType = accessType
         self.description = description
-    }
-}
-
-/// Everything the share sheet has gathered by the time the user taps Add.
-public struct SaveRequest: Equatable, Sendable {
-    public var url: URL
-    /// Metadata from `URLMetadataClient`, if the lookup succeeded. It is
-    /// written into the card so Semble can render it immediately.
-    public var preview: URLPreview?
-    /// An optional note; blank notes are ignored.
-    public var note: String?
-    /// Collections to add the card to (strong refs from `CollectionSummary.ref`).
-    public var collections: [StrongRef]
-
-    public init(url: URL, preview: URLPreview? = nil, note: String? = nil, collections: [StrongRef] = []) {
-        self.url = url
-        self.preview = preview
-        self.note = note
-        self.collections = collections
     }
 }
 
@@ -61,7 +42,11 @@ public struct SaveResult: Equatable, Sendable {
 public protocol Library: Sendable {
     func myCollections() async throws -> [CollectionSummary]
     func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary
-    func save(_ request: SaveRequest) async throws -> SaveResult
+    /// Writes `pending`'s card, note and collection links. Safe to call more
+    /// than once for the same `PendingSave` — its rkeys make every write
+    /// idempotent — so a retry, or a drain racing a retry, never duplicates
+    /// a record.
+    func save(_ pending: PendingSave) async throws -> SaveResult
 }
 
 /// Validation failures raised before anything is written. Errors from the

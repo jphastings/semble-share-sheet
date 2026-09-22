@@ -26,11 +26,22 @@ struct SembleShareApp: App {
 struct RootView: View {
     let account: AccountModel
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        if let session = account.session {
-            SignedInView(account: account, session: session)
-        } else {
-            SignInView(account: account)
+        Group {
+            if let session = account.session {
+                SignedInView(account: account, session: session)
+            } else {
+                SignInView(account: account)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, let session = account.session else { return }
+            Task.detached(priority: .utility) {
+                let library = AppEnvironment.makeLibrary(session: session)
+                await AppEnvironment.saveQueue.drain(for: session.did, using: library)
+            }
         }
     }
 }

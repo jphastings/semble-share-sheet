@@ -1,11 +1,11 @@
 ---
 # SEMBLE-16dh
 title: 'Offline saves: queue locally, sync later, cached collections'
-status: draft
+status: completed
 type: feature
 priority: normal
 created_at: 2026-09-21T13:06:51Z
-updated_at: 2026-09-21T13:06:51Z
+updated_at: 2026-09-22T15:00:00Z
 blocked_by:
     - SEMBLE-yezf
     - SEMBLE-p3fp
@@ -42,7 +42,7 @@ Wordless, per "let the app speak". Candidates to sketch:
 - The app's signed-in screen shows the actual queued links with the same pending glyph, clearing as they sync; failed ones are the only place words are needed.
 - Wordless visually still needs a VoiceOver label.
 
-## Open questions
+## Open questions (carried into SEMBLE-g4sq)
 
 - [ ] Is "saved, pending" allowed to auto-dismiss like a real save, or should it linger a beat longer?
 - [ ] Sign-out with pending saves: block, warn, or keep for next sign-in as the same DID?
@@ -52,11 +52,18 @@ Wordless, per "let the app speak". Candidates to sketch:
 
 ## Proposed breakdown (create as child beans once the shape is agreed)
 
-- [ ] Client-chosen rkeys + idempotent createRecord in PDSClient/SembleLibrary
-- [ ] Persistent save queue in the app group, with claim/expiry
-- [ ] Drain on app foreground, extension open, BGAppRefreshTask
-- [ ] Collections cache with stale-while-revalidate
-- [ ] Offline collection creation
-- [ ] Share sheet pending/offline states (after design)
-- [ ] App pending/failed list (after design)
-- [ ] Privacy page: what is kept on the device and for how long
+- [x] Client-chosen rkeys (`TID`) + idempotent createRecord in PDSClient/SembleLibrary
+- [x] Persistent save queue in the app group, with claim/expiry (`SaveQueue`)
+- [x] Drain on app foreground and extension open
+- [x] ~~Drain via `BGAppRefreshTask`~~ — not doing for now: JP chose foreground/open-only draining. Revisit if saves sit in the queue too long in practice.
+- [x] Collections cache with stale-while-revalidate (`CollectionsCache`)
+- [x] Offline collection creation → SEMBLE-09xl
+- [x] Share sheet pending/offline states — **placeholder only**: `.queued` phase reuses the `.saved` layout with a muted `icloud.and.arrow.up` glyph and the words "Saved — will add when you're online". This is explicitly not the real design (see "Design" above, still to shape with JP) — no app-side pending list, no wordless treatment yet. Real design → SEMBLE-g4sq.
+- [x] App pending/failed list (after design) → SEMBLE-g4sq
+- [x] Privacy page: what is kept on the device and for how long
+
+## Follow-ups
+
+- SEMBLE-g4sq: design the pending state, plus the app's pending/failed list
+- SEMBLE-09xl: create collections while offline
+- SEMBLE-fp0t: fall back to the queue quickly on a flaky connection
