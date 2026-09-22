@@ -71,36 +71,20 @@ public actor SembleLibrary: Library {
             switch lhs.name.localizedCaseInsensitiveCompare(rhs.name) {
             case .orderedAscending: return true
             case .orderedDescending: return false
-            case .orderedSame: return lhs.ref.uri < rhs.ref.uri
+            case .orderedSame: return lhs.id < rhs.id
             }
         }
     }
 
-    public func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { throw SembleLibraryError.emptyCollectionName }
-
-        let timestamp = now()
-        let record = CollectionRecord(
-            name: trimmedName,
-            description: nil,
-            accessType: accessType,
-            collaborators: [],
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            configuration: configuration
-        )
-        let ref = try await store.createRecord(collection: configuration.collectionCollection, record: record, rkey: nil)
-        return CollectionSummary(ref: ref, name: trimmedName, accessType: accessType, description: nil)
-    }
-
     // MARK: - Saving
 
-    /// Writes the card, note and collection links for `pending`, in order,
-    /// using the rkeys it was created with. Every write goes through
-    /// `createIdempotently`, so calling this more than once for the same
-    /// `PendingSave` — a retry, a drain racing a retry, two drains racing
-    /// each other — writes each record at most once.
+    /// Writes `pending`'s new collections, card, note and collection links,
+    /// in that order, using the rkeys it was created with. Every write goes
+    /// through `createIdempotently`, so calling this more than once for the
+    /// same `PendingSave` — a retry, a drain racing a retry, two drains
+    /// racing each other — writes each record at most once. New collections
+    /// go first because the links need their strong refs, exactly like the
+    /// card needs to exist before anything links to it.
     public func save(_ pending: PendingSave) async throws -> SaveResult {
         guard let scheme = pending.url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             throw SembleLibraryError.unsupportedURL(pending.url)
@@ -113,11 +97,30 @@ public actor SembleLibrary: Library {
 
         let timestamp = pending.savedAt
 
-        // 1. The URL card. Everything else points at it.
+        // 1. Any collections this save creates. Two saves can carry the same
+        // `PendingCollection` (same rkey) if it was picked in a second sheet
+        // before the first synced; `createIdempotently` means whichever
+        // reaches the PDS first writes it and the other adopts it.
+        var newCollectionRefs: [String: StrongRef] = [:]
+        for newCollection in pending.newCollections {
+            let record = CollectionRecord(
+                name: newCollection.name,
+                description: nil,
+                accessType: newCollection.accessType,
+                collaborators: [],
+                createdAt: newCollection.createdAt,
+                updatedAt: newCollection.createdAt,
+                configuration: configuration
+            )
+            let ref = try await createIdempotently(collection: configuration.collectionCollection, record: record, rkey: newCollection.rkey)
+            newCollectionRefs[pending.linkKey(for: newCollection)] = ref
+        }
+
+        // 2. The URL card. Everything else points at it.
         let card = CardRecord.url(pending.url, preview: pending.preview, createdAt: timestamp, configuration: configuration)
         let cardRef = try await createIdempotently(collection: configuration.cardCollection, record: card, rkey: pending.cardRkey)
 
-        // 2. The note, if there is one worth keeping.
+        // 3. The note, if there is one worth keeping.
         // ponytail: a note edited after the first (failed) attempt is
         // silently dropped — the retry reuses `noteRkey`, so an
         // already-written note is adopted as-is rather than replaced. Editing
@@ -129,15 +132,25 @@ public actor SembleLibrary: Library {
             noteRef = try await createIdempotently(collection: configuration.cardCollection, record: note, rkey: pending.noteRkey)
         }
 
-        // 3. One link per chosen collection.
+        // 4. One link per chosen collection — existing ones, and the ones
+        // just created above.
+        // Each target is the ref to link to, paired with the key its link
+        // rkey was filed under: a collection that already existed is keyed by
+        // its own URI, a new one by `PendingSave.linkKey(for:)`.
+        let linkTargets: [(key: String, ref: StrongRef)] =
+            pending.collections.map { (key: $0.uri, ref: $0) }
+            + pending.newCollections.compactMap { newCollection in
+                newCollectionRefs[pending.linkKey(for: newCollection)].map { (key: pending.linkKey(for: newCollection), ref: $0) }
+            }
         var linkRefs: [StrongRef] = []
-        if !pending.collections.isEmpty {
+        if !linkTargets.isEmpty {
             let did = await store.did
-            for collection in pending.collections {
+            for (key, collection) in linkTargets {
                 // `PendingSave.ensureLinkRkeys()` keeps this populated for
-                // every selected collection; a missing entry would mean the
-                // caller mutated `collections` without calling it.
-                guard let linkRkey = pending.linkRkeys[collection.uri] else { continue }
+                // every selected collection, new or existing; a missing
+                // entry would mean the caller mutated `collections` /
+                // `newCollections` without calling it.
+                guard let linkRkey = pending.linkRkeys[key] else { continue }
                 let link = CollectionLinkRecord(
                     collection: collection,
                     card: cardRef,

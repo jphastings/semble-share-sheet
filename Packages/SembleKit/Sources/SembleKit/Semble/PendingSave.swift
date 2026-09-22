@@ -14,15 +14,20 @@ public struct PendingSave: Codable, Equatable, Sendable {
     public var preview: URLPreview?
     public var note: String?
     public var collections: [StrongRef]
+    /// Collections this save is creating — offline collection creation is
+    /// just another part of the save's intent, written before the card (see
+    /// `SembleLibrary.save`) so the links below have somewhere to point.
+    public var newCollections: [PendingCollection]
     /// The moment the user tapped Save. Written as every record's
     /// `createdAt`/`addedAt`, never the time it actually reaches the PDS.
     public let savedAt: Date
 
     public var cardRkey: String
     public var noteRkey: String
-    /// Keyed by the linked collection's URI, so a collection added after the
-    /// save was first created gets its own fresh rkey while one already
-    /// chosen (from an earlier attempt) is kept.
+    /// Keyed by the linked collection's URI — of `collections` and
+    /// `newCollections` alike — so a collection added after the save was
+    /// first created gets its own fresh rkey while one already chosen (from
+    /// an earlier attempt) is kept.
     public var linkRkeys: [String: String]
 
     public init(
@@ -32,6 +37,7 @@ public struct PendingSave: Codable, Equatable, Sendable {
         preview: URLPreview? = nil,
         note: String? = nil,
         collections: [StrongRef] = [],
+        newCollections: [PendingCollection] = [],
         savedAt: Date = Date(),
         cardRkey: String? = nil,
         noteRkey: String? = nil,
@@ -43,6 +49,7 @@ public struct PendingSave: Codable, Equatable, Sendable {
         self.preview = preview
         self.note = note
         self.collections = collections
+        self.newCollections = newCollections
         self.savedAt = savedAt
         self.cardRkey = cardRkey ?? TID.next()
         self.noteRkey = noteRkey ?? TID.next()
@@ -50,12 +57,25 @@ public struct PendingSave: Codable, Equatable, Sendable {
         ensureLinkRkeys()
     }
 
-    /// Mints an rkey for any selected collection that doesn't have one yet.
-    /// Call this after changing `collections` (the share sheet does, between
-    /// a failed attempt and a retry); rkeys already chosen are left alone.
+    /// Mints an rkey for any selected collection — existing or newly
+    /// created — that doesn't have one yet. Call this after changing
+    /// `collections`/`newCollections` (the share sheet does, between a
+    /// failed attempt and a retry); rkeys already chosen are left alone.
     public mutating func ensureLinkRkeys() {
         for collection in collections where linkRkeys[collection.uri] == nil {
             linkRkeys[collection.uri] = TID.next()
         }
+        for newCollection in newCollections where linkRkeys[linkKey(for: newCollection)] == nil {
+            linkRkeys[linkKey(for: newCollection)] = TID.next()
+        }
+    }
+
+    /// The `linkRkeys` key for a collection that doesn't exist yet. The PDS
+    /// hands back the URI it actually wrote, which need not be the one
+    /// computed here (a store could answer for a different repo), so both
+    /// sides look the rkey up under this key rather than under whatever
+    /// came back.
+    public func linkKey(for collection: PendingCollection) -> String {
+        collection.uri(did: did)
     }
 }

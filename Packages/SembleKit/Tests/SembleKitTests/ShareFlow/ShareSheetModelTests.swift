@@ -130,7 +130,9 @@ final class ShareSheetModelTests: XCTestCase {
 
         XCTAssertEqual(model.phase, .ready)
         XCTAssertEqual(model.collections.map(\.name), ["Cached"])
-        XCTAssertFalse(model.canCreateCollection, "offline collection creation isn't supported")
+
+        model.query = "Recipes"
+        XCTAssertTrue(model.canCreateCollection, "creating a collection is local and works offline")
     }
 
     func testASuccessfulLoadReplacesTheCache() async {
@@ -236,7 +238,7 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertEqual(saved.url, url)
         XCTAssertEqual(saved.preview?.title, "An article")
         XCTAssertEqual(saved.note, "worth a second read")
-        XCTAssertEqual(saved.collections, [recipes.ref])
+        XCTAssertEqual(saved.collections, [recipes.ref!])
         XCTAssertEqual(saved.did, did)
     }
 
@@ -347,39 +349,25 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertTrue(model.visibleCollections.isEmpty)
     }
 
-    func testCreateCollectionSelectsTheNewCollectionAndClearsTheQuery() async {
+    func testCreateCollectionIsLocalAndSelectsTheNewCollectionAndClearsTheQuery() async {
         let library = FakeLibrary(collections: [Self.collection("Reading")])
         let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
         await model.load()
+        let requestsBeforeCreating = library.collectionsRequests
 
         model.query = "  Cooking "
-        await model.createCollection()
+        model.createCollection()
 
-        XCTAssertEqual(library.createdCollections.map(\.name), ["Cooking"])
-        XCTAssertEqual(library.createdCollections.map(\.accessType), [.closed])
+        XCTAssertEqual(library.collectionsRequests, requestsBeforeCreating, "creating a collection must not touch the network")
         XCTAssertEqual(model.collections.map(\.name), ["Cooking", "Reading"])
         XCTAssertEqual(model.query, "")
         XCTAssertFalse(model.canCreateCollection)
-        XCTAssertNil(model.collectionError)
 
         let created = model.collections[0]
+        XCTAssertNotNil(created.pending, "nothing was written, so it has no PDS record yet")
+        XCTAssertNil(created.ref)
         XCTAssertTrue(model.selected.contains(created.id))
         XCTAssertEqual(model.phase, .ready)
-    }
-
-    func testCreateCollectionFailureIsReportedInline() async {
-        let library = FakeLibrary(collections: [])
-        library.createError = TestError("Couldn't create the collection")
-        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
-        await model.load()
-
-        model.query = "Cooking"
-        await model.createCollection()
-
-        XCTAssertEqual(model.collectionError, "Couldn't create the collection")
-        XCTAssertEqual(model.query, "Cooking", "the query is kept so the user can try again")
-        XCTAssertTrue(model.collections.isEmpty)
-        XCTAssertEqual(model.phase, .ready, "a picker problem doesn't take the whole sheet down")
     }
 
     func testCreateCollectionIsIgnoredWhenNotOffered() async {
@@ -388,9 +376,58 @@ final class ShareSheetModelTests: XCTestCase {
         await model.load()
 
         model.query = "reading"
-        await model.createCollection()
+        model.createCollection()
 
-        XCTAssertTrue(library.createdCollections.isEmpty)
+        XCTAssertEqual(model.collections.map(\.name), ["Reading"], "no collection should have been created")
+    }
+
+    // MARK: Pending collections (created offline, not yet synced)
+
+    func testAPendingCollectionFromAQueuedSaveAppearsInAFreshModelsPicker() async throws {
+        let queue = makeQueue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        try queue.enqueue(PendingSave(did: did, url: URL(string: "https://example.com/other")!, newCollections: [recipes]))
+
+        let library = FakeLibrary(collections: [Self.collection("Reading")])
+        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url, did: did, queue: queue)
+
+        await model.load()
+
+        let found = try XCTUnwrap(model.collections.first { $0.name == "Recipes" })
+        XCTAssertEqual(found.pending, recipes)
+        XCTAssertEqual(found.id, recipes.uri(did: did))
+    }
+
+    func testAPendingCollectionIsNotDuplicatedOnceTheNetworkListContainsItsURI() async throws {
+        let queue = makeQueue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        try queue.enqueue(PendingSave(did: did, url: URL(string: "https://example.com/other")!, newCollections: [recipes]))
+        // Another save's copy already synced: the network now knows this collection by its real (chosen) rkey's URI.
+        let synced = CollectionSummary(ref: StrongRef(uri: recipes.uri(did: did), cid: "bafyrecipes"), name: "Recipes", accessType: .closed)
+        let library = FakeLibrary(collections: [synced])
+        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url, did: did, queue: queue)
+
+        await model.load()
+
+        XCTAssertEqual(model.collections.filter { $0.name == "Recipes" }.count, 1, "the synced copy must win, not sit alongside a pending duplicate")
+        XCTAssertNil(model.collections.first { $0.name == "Recipes" }?.pending)
+    }
+
+    func testSelectingAPendingCollectionInASecondSaveCarriesTheSameRkey() async throws {
+        let queue = makeQueue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        try queue.enqueue(PendingSave(did: did, url: URL(string: "https://example.com/other")!, newCollections: [recipes]))
+
+        let library = FakeLibrary(collections: [Self.collection("Reading")])
+        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url, did: did, queue: queue)
+        await model.load()
+        let offered = try XCTUnwrap(model.collections.first { $0.name == "Recipes" })
+
+        model.toggle(offered)
+        await model.save()
+
+        let saved = try XCTUnwrap(library.savedRequests.first)
+        XCTAssertEqual(saved.newCollections, [recipes], "the second save must reuse the same rkey rather than minting a new one")
     }
 
     // MARK: Fixtures

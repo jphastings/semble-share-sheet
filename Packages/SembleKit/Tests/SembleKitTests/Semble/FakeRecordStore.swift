@@ -3,7 +3,7 @@ import Foundation
 
 /// An in-memory `RecordStore`. Records every write as `(collection, rkey,
 /// JSON)` in order and hands back deterministic strong refs
-/// (`at://did:plc:test/<collection>/<rkey>`), so tests can assert on what was
+/// (`at://<did>/<collection>/<rkey>`), so tests can assert on what was
 /// written and in which order. A duplicate `rkey` in the same collection is
 /// rejected the way a real PDS rejects it: an `XRPCError.server`.
 /// `listRecords` serves canned pages keyed by cursor.
@@ -85,7 +85,7 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
             if let rkey, recordsByKey[key] != nil {
                 throw XRPCError.server(status: 400, error: "InvalidSwap", message: "Record already exists at \(rkey)")
             }
-            let uri = "at://did:plc:test/\(collection)/\(resolvedRkey)"
+            let uri = "at://\(storedDID)/\(collection)/\(resolvedRkey)"
             let cid = "bafy\(writes.count + 1)"
             writes.append(Write(collection: collection, rkey: resolvedRkey, data: data))
             recordsByKey[key] = (uri: uri, cid: cid, data: data)
