@@ -8,19 +8,37 @@ public enum CollectionAccessType: String, Codable, CaseIterable, Sendable {
 }
 
 /// A collection as the picker needs it: enough to show it and to link a card
-/// to it. `ref` is the strong ref a `CollectionLinkRecord` must carry.
+/// to it. Exactly one of `ref`/`pending` is set: `ref` is the strong ref a
+/// `CollectionLinkRecord` must carry, for a collection that already has a
+/// record on the PDS; `pending` is set instead for one created locally and
+/// not yet written — it has no cid, so there is deliberately no way to build
+/// a `StrongRef` for it (which could otherwise reach a link record empty).
 public struct CollectionSummary: Identifiable, Hashable, Sendable, Codable {
-    public var id: String { ref.uri }
-    public let ref: StrongRef
+    public let id: String
+    public let ref: StrongRef?
+    public let pending: PendingCollection?
     public let name: String
     public let accessType: CollectionAccessType
     public let description: String?
 
+    /// A collection that already has a record on the PDS.
     public init(ref: StrongRef, name: String, accessType: CollectionAccessType, description: String? = nil) {
+        self.id = ref.uri
         self.ref = ref
+        self.pending = nil
         self.name = name
         self.accessType = accessType
         self.description = description
+    }
+
+    /// A collection created locally and not yet written to the PDS.
+    public init(pending: PendingCollection, did: String, configuration: SembleConfiguration = .production) {
+        self.id = pending.uri(did: did, configuration: configuration)
+        self.ref = nil
+        self.pending = pending
+        self.name = pending.name
+        self.accessType = pending.accessType
+        self.description = nil
     }
 }
 
@@ -41,11 +59,10 @@ public struct SaveResult: Equatable, Sendable {
 /// previewed and tested without a network.
 public protocol Library: Sendable {
     func myCollections() async throws -> [CollectionSummary]
-    func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary
-    /// Writes `pending`'s card, note and collection links. Safe to call more
-    /// than once for the same `PendingSave` — its rkeys make every write
-    /// idempotent — so a retry, or a drain racing a retry, never duplicates
-    /// a record.
+    /// Writes `pending`'s new collections, card, note and collection links,
+    /// in that order. Safe to call more than once for the same `PendingSave`
+    /// — its rkeys make every write idempotent — so a retry, or a drain
+    /// racing a retry, never duplicates a record.
     func save(_ pending: PendingSave) async throws -> SaveResult
 }
 
@@ -55,7 +72,6 @@ public enum SembleLibraryError: LocalizedError, Equatable {
     /// Only `http` and `https` links can be saved; the share sheet is
     /// offered `mailto:`, `file:` and friends too.
     case unsupportedURL(URL)
-    case emptyCollectionName
     /// The note exceeds `network.cosmik.card`'s `noteContent.text` limit.
     /// Checked before anything is written, so a save never strands a card.
     case noteTooLong
@@ -64,8 +80,6 @@ public enum SembleLibraryError: LocalizedError, Equatable {
         switch self {
         case .unsupportedURL:
             return "Semble can only save web links (http or https)."
-        case .emptyCollectionName:
-            return "Give the collection a name."
         case .noteTooLong:
             return "That note is too long to save — try trimming it."
         }

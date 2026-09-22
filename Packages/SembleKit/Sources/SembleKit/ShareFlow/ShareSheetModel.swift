@@ -56,14 +56,6 @@ public final class ShareSheetModel: ObservableObject {
     @Published public var query: String = ""
     /// Free text saved as a `NOTE` card attached to the URL card. Whitespace-only is ignored.
     @Published public var note: String = ""
-    /// True while `createCollection()` is in flight.
-    @Published public private(set) var isCreatingCollection = false
-    /// A user-presentable message when creating a collection failed. Cleared on the next attempt.
-    @Published public private(set) var collectionError: String?
-    /// True once a collections refresh has failed and the picker is showing
-    /// stale (or empty) data. Creating a collection needs a live PDS
-    /// round-trip, so it's disabled until the next successful refresh.
-    @Published public private(set) var collectionsRefreshFailed = false
 
     /// The URL being saved, or `nil` when the host shared nothing usable.
     public let url: URL?
@@ -141,11 +133,12 @@ public final class ShareSheetModel: ObservableObject {
     }
 
     /// True when the query names a collection that doesn't exist yet, so the
-    /// picker should offer a "Create new collection" row. Offline collection
-    /// creation isn't supported, so this is also `false` whenever the last
-    /// refresh failed (the list on screen may be stale or empty).
+    /// picker should offer a "Create new collection" row. Creating is local
+    /// and instant (see `createCollection()`), so this needs no network —
+    /// only somewhere to name-clash-check against, which the cache or an
+    /// empty list both satisfy just as well as a live fetch.
     public var canCreateCollection: Bool {
-        guard library != nil, hasLoaded, !isCreatingCollection, !collectionsRefreshFailed else { return false }
+        guard library != nil, did != nil, hasLoaded else { return false }
         let name = creationName
         guard !name.isEmpty else { return false }
         return !collections.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
@@ -184,8 +177,11 @@ public final class ShareSheetModel: ObservableObject {
     /// (`.ready` straight away) while the network fetch replaces it in the
     /// background; a transient refresh failure leaves the cache (or an empty
     /// list, offline with nothing cached) on screen rather than failing the
-    /// whole sheet — saving without collections has to work offline. The
-    /// preview (when it isn't waiting on `loadPreview()`) is filled in
+    /// whole sheet — saving without collections has to work offline. Either
+    /// way, collections created by a still-queued save of this DID's are
+    /// merged in (see `withPendingCollections(_:)`) so a second sheet offers
+    /// a collection the first one created rather than risking a duplicate.
+    /// The preview (when it isn't waiting on `loadPreview()`) is filled in
     /// independently and never delays this.
     public func load() async {
         guard let library else {
@@ -198,7 +194,7 @@ public final class ShareSheetModel: ObservableObject {
         }
 
         if let did, let cached = collectionsCache?.load(for: did) {
-            collections = cached
+            collections = withPendingCollections(cached)
             hasLoaded = true
             phase = .ready
         } else {
@@ -213,15 +209,15 @@ public final class ShareSheetModel: ObservableObject {
 
         do {
             let fetched = try await library.myCollections()
-            collections = fetched
+            collections = withPendingCollections(fetched)
             hasLoaded = true
-            collectionsRefreshFailed = false
             if let did {
+                // The raw fetch, never the merged list: a pending collection
+                // has no record yet and must not be cached as if it did.
                 collectionsCache?.save(fetched, for: did)
             }
             phase = .ready
         } catch {
-            collectionsRefreshFailed = true
             if hasLoaded {
                 // Already showing something usable (cache, or an earlier
                 // successful load); a refresh failure doesn't take that away.
@@ -229,7 +225,9 @@ public final class ShareSheetModel: ObservableObject {
             }
             guard isPermanentFailure(error) else {
                 // Nothing cached and the network is the problem, not the
-                // request: still usable, just with an empty picker.
+                // request: still usable, just with an empty picker (plus
+                // whatever's pending).
+                collections = withPendingCollections([])
                 hasLoaded = true
                 phase = .ready
                 return
@@ -237,6 +235,18 @@ public final class ShareSheetModel: ObservableObject {
             failedStep = .load
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// `fetched` (from the cache or the network) plus any collection a
+    /// still-queued or in-flight save of this DID's has created, skipping
+    /// ones `fetched` already carries a synced record for.
+    private func withPendingCollections(_ fetched: [CollectionSummary]) -> [CollectionSummary] {
+        guard let did else { return fetched }
+        let known = Set(fetched.map(\.id))
+        let pending = queue.pendingCollections(for: did)
+            .map { CollectionSummary(pending: $0, did: did) }
+            .filter { !known.contains($0.id) }
+        return fetched + pending
     }
 
     /// Fetches the preview for a URL that needed confirmation first. No-op if
@@ -274,22 +284,19 @@ public final class ShareSheetModel: ObservableObject {
     }
 
     /// Creates a closed collection named after the current query, selects it,
-    /// and clears the query. No-op unless `canCreateCollection`.
-    public func createCollection() async {
-        guard let library, canCreateCollection else { return }
-        let name = creationName
-        isCreatingCollection = true
-        collectionError = nil
-        defer { isCreatingCollection = false }
-
-        do {
-            let created = try await library.createCollection(named: name, accessType: .closed)
-            collections.insert(created, at: 0)
-            selected.insert(created.id)
-            query = ""
-        } catch {
-            collectionError = error.localizedDescription
-        }
+    /// and clears the query. Entirely local — no network call, online or
+    /// offline — and instant: nothing is written until a save using it
+    /// actually reaches `SembleLibrary.save`. No-op unless `canCreateCollection`.
+    ///
+    /// Deliberate consequence: a collection created here and then
+    /// deselected, or created in a sheet that's cancelled before saving, is
+    /// never written anywhere — there was never a save that needed it.
+    public func createCollection() {
+        guard let did, canCreateCollection else { return }
+        let created = CollectionSummary(pending: PendingCollection(name: creationName, accessType: .closed), did: did)
+        collections.insert(created, at: 0)
+        selected.insert(created.id)
+        query = ""
     }
 
     /// Builds (or updates) the pending save, enqueues it, and tries to write
@@ -309,11 +316,14 @@ public final class ShareSheetModel: ObservableObject {
 
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let noteText = trimmedNote.isEmpty ? nil : trimmedNote
-        let collectionRefs = selectedCollections.map(\.ref)
+        let chosen = selectedCollections
+        let collectionRefs = chosen.compactMap(\.ref)
+        let newCollections = chosen.compactMap(\.pending)
 
-        var pending = pendingSave ?? PendingSave(did: did, url: url, preview: preview, note: noteText, collections: collectionRefs)
+        var pending = pendingSave ?? PendingSave(did: did, url: url, preview: preview, note: noteText, collections: collectionRefs, newCollections: newCollections)
         pending.note = noteText
         pending.collections = collectionRefs
+        pending.newCollections = newCollections
         pending.ensureLinkRkeys()
         pendingSave = pending
 

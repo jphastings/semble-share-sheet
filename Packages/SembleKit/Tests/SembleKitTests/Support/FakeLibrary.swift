@@ -7,7 +7,6 @@ import Foundation
 final class FakeLibrary: Library, @unchecked Sendable {
     var collections: [CollectionSummary]
     var collectionsError: Error?
-    var createError: Error?
     /// Thrown by every `save(_:)` call until cleared.
     var saveError: Error?
     /// Overrides `saveError` for one rkey only, so a test can make a retry
@@ -16,11 +15,9 @@ final class FakeLibrary: Library, @unchecked Sendable {
 
     private let lock = NSLock()
     private var _collectionsRequests = 0
-    private var _createdCollections: [CollectionSummary] = []
     private var _savedRequests: [PendingSave] = []
 
     var collectionsRequests: Int { lock.withLock { _collectionsRequests } }
-    var createdCollections: [CollectionSummary] { lock.withLock { _createdCollections } }
     var savedRequests: [PendingSave] { lock.withLock { _savedRequests } }
 
     init(collections: [CollectionSummary] = []) {
@@ -31,19 +28,6 @@ final class FakeLibrary: Library, @unchecked Sendable {
         lock.withLock { _collectionsRequests += 1 }
         if let collectionsError { throw collectionsError }
         return collections
-    }
-
-    func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary {
-        if let createError { throw createError }
-        let created = CollectionSummary(
-            ref: StrongRef(uri: "at://did:plc:alice/network.cosmik.collection/new\(createdCollections.count + 1)", cid: "bafynew\(createdCollections.count + 1)"),
-            name: name,
-            accessType: accessType,
-            description: nil
-        )
-        lock.withLock { _createdCollections.append(created) }
-        collections.insert(created, at: 0)
-        return created
     }
 
     func save(_ pending: PendingSave) async throws -> SaveResult {

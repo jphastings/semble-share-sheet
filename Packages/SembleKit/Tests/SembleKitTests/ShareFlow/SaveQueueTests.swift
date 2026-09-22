@@ -173,6 +173,51 @@ final class SaveQueueTests: XCTestCase {
         XCTAssertFalse(anyFileExists(save.id))
     }
 
+    // MARK: - pendingCollections
+
+    func testPendingCollectionsReturnsOnesFromQueuedItemsOfThatDID() async throws {
+        let queue = queue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        try queue.enqueue(PendingSave(did: "did:plc:alice", url: URL(string: "https://example.com/a")!, newCollections: [recipes]))
+        try queue.enqueue(PendingSave(did: "did:plc:bob", url: URL(string: "https://example.com/b")!, newCollections: [PendingCollection(name: "Bob's", accessType: .closed)]))
+
+        XCTAssertEqual(queue.pendingCollections(for: "did:plc:alice"), [recipes])
+    }
+
+    func testPendingCollectionsDedupesByRkeyAcrossSaves() async throws {
+        let queue = queue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        try queue.enqueue(PendingSave(did: "did:plc:alice", url: URL(string: "https://example.com/a")!, newCollections: [recipes]))
+        try queue.enqueue(PendingSave(did: "did:plc:alice", url: URL(string: "https://example.com/b")!, newCollections: [recipes]))
+
+        XCTAssertEqual(queue.pendingCollections(for: "did:plc:alice"), [recipes])
+    }
+
+    func testPendingCollectionsIncludesAClaimedInFlightItem() async throws {
+        let queue = queue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        let save = PendingSave(did: "did:plc:alice", url: URL(string: "https://example.com/a")!, newCollections: [recipes])
+        try queue.enqueue(save)
+        // Simulate a drain that has claimed the item but not yet resolved it.
+        let json = directory.appendingPathComponent(save.id.uuidString).appendingPathExtension("json")
+        let inflight = directory.appendingPathComponent(save.id.uuidString).appendingPathExtension("inflight")
+        try FileManager.default.moveItem(at: json, to: inflight)
+
+        XCTAssertEqual(queue.pendingCollections(for: "did:plc:alice"), [recipes])
+    }
+
+    func testPendingCollectionsExcludesAFailedItem() async throws {
+        let queue = queue()
+        let recipes = PendingCollection(name: "Recipes", accessType: .closed)
+        let save = PendingSave(did: "did:plc:alice", url: URL(string: "https://example.com/a")!, newCollections: [recipes])
+        try queue.enqueue(save)
+        let library = FakeLibrary()
+        library.saveError = SembleLibraryError.unsupportedURL(URL(string: "https://example.com/a")!)
+        await queue.drain(for: "did:plc:alice", using: library) // permanent failure: parked as `.failed`
+
+        XCTAssertEqual(queue.pendingCollections(for: "did:plc:alice"), [])
+    }
+
     // MARK: - createdAt survives the round trip
 
     func testADrainedItemIsWrittenWithItsOriginalSavedAt() async throws {

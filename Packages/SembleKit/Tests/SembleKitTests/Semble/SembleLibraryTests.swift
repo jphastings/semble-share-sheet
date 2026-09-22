@@ -15,9 +15,10 @@ final class SembleLibraryTests: XCTestCase {
     private func pendingSave(
         did: String = "did:plc:alice",
         note: String? = nil,
-        collections: [StrongRef] = []
+        collections: [StrongRef] = [],
+        newCollections: [PendingCollection] = []
     ) -> PendingSave {
-        PendingSave(did: did, url: link, note: note, collections: collections, savedAt: fixedDate)
+        PendingSave(did: did, url: link, note: note, collections: collections, newCollections: newCollections, savedAt: fixedDate)
     }
 
     // MARK: - save
@@ -259,7 +260,7 @@ final class SembleLibraryTests: XCTestCase {
         XCTAssertEqual(collections[0].accessType, .closed)
         XCTAssertEqual(collections[0].description, "Fruit")
         XCTAssertEqual(collections[2].accessType, .open)
-        XCTAssertEqual(collections[0].id, collections[0].ref.uri)
+        XCTAssertEqual(collections[0].id, collections[0].ref?.uri)
     }
 
     func testMyCollectionsDefaultsToClosedAndSkipsNamelessRecords() async throws {
@@ -294,36 +295,48 @@ final class SembleLibraryTests: XCTestCase {
         XCTAssertEqual(store.listCalls.count, 1)
     }
 
-    // MARK: - createCollection
+    // MARK: - new collections
 
-    func testCreateCollectionTrimsTheNameAndWritesAClosedRecord() async throws {
-        let store = FakeRecordStore()
+    func testSaveWritesANewCollectionBeforeTheCardAndLinksIt() async throws {
+        // The new collection's link rkey is looked up by its future URI,
+        // computed from the `PendingSave`'s own `did` — which is always the
+        // authenticated repo's did in practice (`SaveQueue` routes a save to
+        // a drain for its own DID), so the fake store is given the same one.
+        let store = FakeRecordStore(did: "did:plc:alice")
         let library = makeLibrary(store: store)
+        let recipes = PendingCollection(rkey: "recipes1", name: "Recipes", accessType: .closed, createdAt: fixedDate)
 
-        let summary = try await library.createCollection(named: "  Reading list \n", accessType: .closed)
+        let result = try await library.save(pendingSave(newCollections: [recipes]))
 
-        XCTAssertEqual(summary.name, "Reading list")
-        XCTAssertEqual(summary.accessType, .closed)
-        let json = try XCTUnwrap(store.writtenRecords(in: "network.cosmik.collection").first?.json)
-        XCTAssertEqual(json["$type"] as? String, "network.cosmik.collection")
-        XCTAssertEqual(json["name"] as? String, "Reading list")
-        XCTAssertEqual(json["accessType"] as? String, "CLOSED")
-        XCTAssertEqual(json["createdAt"] as? String, "2023-11-14T22:13:20.500Z")
-        XCTAssertEqual(json["updatedAt"] as? String, "2023-11-14T22:13:20.500Z")
+        XCTAssertEqual(store.writes.map(\.collection), [
+            "network.cosmik.collection",
+            "network.cosmik.card",
+            "network.cosmik.collectionLink",
+        ])
+        let collectionJSON = store.writes[0].json
+        XCTAssertEqual(collectionJSON["name"] as? String, "Recipes")
+        XCTAssertEqual(collectionJSON["accessType"] as? String, "CLOSED")
+        XCTAssertEqual(collectionJSON["createdAt"] as? String, "2023-11-14T22:13:20.500Z")
+
+        let linkJSON = store.writes[2].json
+        let collectionRef = try XCTUnwrap(linkJSON["collection"] as? [String: Any])
+        XCTAssertEqual(collectionRef["uri"] as? String, "at://did:plc:alice/network.cosmik.collection/recipes1")
+        XCTAssertEqual(collectionRef["cid"] as? String, "bafy1")
+        XCTAssertEqual(result.collectionLinks.count, 1)
     }
 
-    func testCreateCollectionRejectsBlankNames() async {
-        let store = FakeRecordStore()
+    func testRetryAfterTheNewCollectionSyncedAdoptsItInsteadOfDuplicatingIt() async throws {
+        let store = FakeRecordStore(did: "did:plc:alice")
         let library = makeLibrary(store: store)
+        let recipes = PendingCollection(rkey: "recipes1", name: "Recipes", accessType: .closed, createdAt: fixedDate)
+        let pending = pendingSave(newCollections: [recipes])
 
-        do {
-            _ = try await library.createCollection(named: "   ", accessType: .open)
-            XCTFail("expected an error")
-        } catch let error as SembleLibraryError {
-            XCTAssertEqual(error, .emptyCollectionName)
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
-        XCTAssertTrue(store.writes.isEmpty)
+        let first = try await library.save(pending)
+        // The client never saw the first response; it retries the very same
+        // `PendingSave`, rkeys (including the collection's) included.
+        let second = try await library.save(pending)
+
+        XCTAssertEqual(store.writtenRecords(in: "network.cosmik.collection").count, 1, "no second collection should reach the PDS")
+        XCTAssertEqual(second.collectionLinks, first.collectionLinks)
     }
 }

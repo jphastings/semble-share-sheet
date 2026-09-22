@@ -49,6 +49,28 @@ public final class SaveQueue: @unchecked Sendable {
         delete(id, "failed")
     }
 
+    /// Collections created locally by saves still waiting to sync for `did`
+    /// — queued or currently in flight, never `.failed` ones. This is how a
+    /// second sheet finds out about a collection an earlier, still-offline
+    /// save already created, so it can offer and reuse it instead of making
+    /// a duplicate.
+    public func pendingCollections(for did: String) -> [PendingCollection] {
+        var byRkey: [String: PendingCollection] = [:]
+        for id in queuedIDs() {
+            guard let pending = try? peek(id), pending.did == did else { continue }
+            for newCollection in pending.newCollections {
+                byRkey[newCollection.rkey] = newCollection
+            }
+        }
+        for id in inflightIDs() {
+            guard let pending = try? load(id, "inflight"), pending.did == did else { continue }
+            for newCollection in pending.newCollections {
+                byRkey[newCollection.rkey] = newCollection
+            }
+        }
+        return Array(byRkey.values)
+    }
+
     // MARK: Attempting
 
     public enum Attempt: Equatable {
@@ -146,9 +168,17 @@ public final class SaveQueue: @unchecked Sendable {
     }
 
     private func queuedIDs() -> [UUID] {
+        entryIDs(withExtension: "json")
+    }
+
+    private func inflightIDs() -> [UUID] {
+        entryIDs(withExtension: "inflight")
+    }
+
+    private func entryIDs(withExtension ext: String) -> [UUID] {
         guard let entries = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return [] }
         return entries
-            .filter { $0.pathExtension == "json" }
+            .filter { $0.pathExtension == ext }
             .compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) }
     }
 

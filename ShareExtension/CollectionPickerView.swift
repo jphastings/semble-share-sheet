@@ -16,25 +16,18 @@ struct CollectionPickerView: View {
 
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if model.canCreateCollection || model.isCreatingCollection {
+                    if model.canCreateCollection {
                         createRow
                     }
                     ForEach(model.visibleCollections) { collection in
                         row(for: collection)
                     }
-                    if model.collections.isEmpty, !model.canCreateCollection, !model.isCreatingCollection {
+                    if model.collections.isEmpty, !model.canCreateCollection {
                         Text("No collections yet.")
                             .font(.footnote)
                             .foregroundStyle(Color.sembleMutedText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 10)
-                    }
-                    if let error = model.collectionError {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 6)
                     }
                 }
             }
@@ -53,7 +46,7 @@ struct CollectionPickerView: View {
                 .submitLabel(.done)
                 .onSubmit {
                     if model.canCreateCollection {
-                        Task { await model.createCollection() }
+                        model.createCollection()
                     }
                 }
             if !model.query.isEmpty {
@@ -73,15 +66,11 @@ struct CollectionPickerView: View {
 
     private var createRow: some View {
         Button {
-            Task { await model.createCollection() }
+            model.createCollection()
         } label: {
             HStack(spacing: 12) {
-                if model.isCreatingCollection {
-                    ProgressView()
-                } else {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundStyle(Color.sembleOrange)
-                }
+                Image(systemName: "plus.circle.fill")
+                    .foregroundStyle(Color.sembleOrange)
                 Text("Create new collection “\(model.creationName)”")
                     .foregroundStyle(Color.sembleText)
                     .lineLimit(1)
@@ -89,7 +78,6 @@ struct CollectionPickerView: View {
             }
             .padding(.vertical, 10)
         }
-        .disabled(!model.canCreateCollection)
     }
 
     private func row(for collection: CollectionSummary) -> some View {

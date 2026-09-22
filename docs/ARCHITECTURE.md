@@ -45,20 +45,20 @@ committed.
    non-fatal.
 4. It lists the user's `network.cosmik.collection` records from their PDS
    (`com.atproto.repo.listRecords`) to populate the collection picker.
-5. On **Add**, it builds a `PendingSave` (the URL, note, chosen collections
-   and a client-chosen ATProto TID rkey for each record it will write),
-   enqueues it in the app-group `SaveQueue`, and tries it immediately. If the
-   PDS is unreachable the item stays queued and the sheet still dismisses;
-   nothing is lost. Writing a `PendingSave` creates, in order:
+5. On **Add**, it builds a `PendingSave` (the URL, note, chosen collections,
+   any collection created from the picker and not yet on the PDS, and a
+   client-chosen ATProto TID rkey for each record it will write), enqueues it
+   in the app-group `SaveQueue`, and tries it immediately. If the PDS is
+   unreachable the item stays queued and the sheet still dismisses; nothing
+   is lost. Writing a `PendingSave` creates, in order:
+   - a `network.cosmik.collection` record for each collection the save is
+     creating (see "Creating a collection" below);
    - a `network.cosmik.card` record of type `URL`;
    - if a note was entered, a `network.cosmik.card` record of type `NOTE`
      whose `parentCard` is a strong ref to the URL card;
-   - one `network.cosmik.collectionLink` record per chosen collection, each
-     holding strong refs to the collection and the card.
-
-   Any collection the user creates from the picker becomes a
-   `network.cosmik.collection` record first (offline collection creation
-   isn't supported yet).
+   - one `network.cosmik.collectionLink` record per chosen collection
+     (existing or just created), each holding strong refs to the collection
+     and the card.
 
    Because every record is created with its rkey chosen up front, writing the
    same `PendingSave` twice — a retry, or a drain racing a retry — is safe:
@@ -68,6 +68,18 @@ committed.
    about this relies on the process surviving; the app (on foreground) and
    the extension (on open) both drain whatever is left in the queue for the
    signed-in DID.
+
+   **Creating a collection** from the picker is local and instant, online or
+   offline — one code path, no network call: it mints a `PendingCollection`
+   (name, access type and a client-chosen rkey, so its AT-URI is known
+   before it exists), shows it in the picker and selects it. Nothing is
+   written until a save that uses it actually reaches `SembleLibrary.save`,
+   which writes it before the card — so a collection created and then
+   deselected, or created in a sheet that's cancelled, is simply never
+   written. A collection created by one still-queued save is offered again
+   in any other sheet for the same DID (`SaveQueue.pendingCollections`),
+   carrying the same rkey, so two saves that both pick it don't create it
+   twice — whichever syncs first writes it and the other adopts it.
 
 Record shapes mirror the lexicons in
 [cosmik-network/semble](https://github.com/cosmik-network/semble/tree/main/src/modules/atproto/infrastructure/lexicons)
@@ -187,12 +199,27 @@ public struct SembleConfiguration {
 
 public enum CollectionAccessType: String, Codable { case open = "OPEN", closed = "CLOSED" }
 
+/// Exactly one of `ref`/`pending` is set: `ref` for a collection with a PDS
+/// record, `pending` for one created locally and not yet written — which has
+/// no cid, so there is deliberately no way to build a `StrongRef` for it.
 public struct CollectionSummary: Identifiable, Hashable {
-    public var id: String { ref.uri }
-    public let ref: StrongRef
+    public let id: String       // = ref.uri, or pending's would-be uri
+    public let ref: StrongRef?
+    public let pending: PendingCollection?
     public let name: String
     public let accessType: CollectionAccessType
     public let description: String?
+}
+
+/// A collection created locally and not yet written to the PDS. `rkey` is
+/// chosen up front (like `PendingSave`'s own rkeys) so its AT-URI is known
+/// before it exists, letting it be selected and linked right away.
+public struct PendingCollection: Codable, Equatable, Hashable, Sendable {
+    public let rkey: String
+    public var name: String
+    public var accessType: CollectionAccessType
+    public let createdAt: Date
+    public func uri(did: String, configuration: SembleConfiguration = .production) -> String
 }
 
 public struct URLPreview: Codable, Equatable {
@@ -211,11 +238,12 @@ public struct URLMetadataClient {
 public struct PendingSave: Codable, Equatable, Sendable {
     public let id: UUID; public let did: String
     public var url: URL; public var preview: URLPreview?; public var note: String?
-    public var collections: [StrongRef]; public let savedAt: Date
+    public var collections: [StrongRef]; public var newCollections: [PendingCollection]
+    public let savedAt: Date
     public var cardRkey: String; public var noteRkey: String; public var linkRkeys: [String: String]
-    public init(id: UUID = UUID(), did: String, url: URL, preview: URLPreview? = nil, note: String? = nil, collections: [StrongRef] = [], savedAt: Date = Date(), cardRkey: String? = nil, noteRkey: String? = nil, linkRkeys: [String: String] = [:])
-    /// Mints an rkey for any collection in `collections` that doesn't have
-    /// one yet; existing ones are left alone.
+    public init(id: UUID = UUID(), did: String, url: URL, preview: URLPreview? = nil, note: String? = nil, collections: [StrongRef] = [], newCollections: [PendingCollection] = [], savedAt: Date = Date(), cardRkey: String? = nil, noteRkey: String? = nil, linkRkeys: [String: String] = [:])
+    /// Mints an rkey for any collection in `collections`/`newCollections`
+    /// that doesn't have one yet; existing ones are left alone.
     public mutating func ensureLinkRkeys()
 }
 public struct SaveResult { card: StrongRef; note: StrongRef?; collectionLinks: [StrongRef] }
@@ -224,10 +252,10 @@ public struct SaveResult { card: StrongRef; note: StrongRef?; collectionLinks: [
 /// previewed and tested without a network.
 public protocol Library: Sendable {
     func myCollections() async throws -> [CollectionSummary]
-    func createCollection(named name: String, accessType: CollectionAccessType) async throws -> CollectionSummary
-    /// Safe to call more than once for the same `PendingSave`: its rkeys
-    /// make every write idempotent, so a retry or a drain racing a retry
-    /// never duplicates a record.
+    /// Writes `pending`'s new collections, card, note and collection links,
+    /// in that order. Safe to call more than once for the same
+    /// `PendingSave`: its rkeys make every write idempotent, so a retry or a
+    /// drain racing a retry never duplicates a record.
     func save(_ pending: PendingSave) async throws -> SaveResult
 }
 
@@ -260,6 +288,10 @@ public final class SaveQueue {
     /// Tries every item queued for `did`; another DID's items are left
     /// completely untouched. A permanent failure is parked as `.failed`.
     func drain(for did: String, using library: any Library) async
+    /// Collections created by saves still waiting to sync for `did` — so a
+    /// second sheet can offer one an earlier, still-offline save already
+    /// created instead of risking a duplicate.
+    func pendingCollections(for did: String) -> [PendingCollection]
 }
 
 /// The last-known collection list per DID, cached in the app-group container
