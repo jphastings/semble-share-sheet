@@ -3,6 +3,12 @@
 Newest first. Entries from 0.2.2 onwards are written by the release
 automation from the files in `.changeset/`; see CONTRIBUTING.md.
 
+## 0.2.4 (2026-09-22)
+
+### Features
+
+- You can now create a new collection while offline — it's picked instantly and saved to your PDS along with the link once you're back online.
+
 ## 0.2.3 (2026-09-22)
 
 ### Fixes
