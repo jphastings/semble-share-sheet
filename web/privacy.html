@@ -53,7 +53,7 @@
 <body>
   <main>
     <h1>Privacy notice</h1>
-    <p class="meta">Add to Semble · Updated September 2026</p>
+    <p class="meta">Add to Semble · Updated November 2026</p>
 
     <p>
       Add to Semble is a small, open-source iOS app. It has no server, no
@@ -83,9 +83,10 @@
       If a link is saved while your device has no connection, the app keeps
       it — the link and its preview, your note, the collections you chose and
       any new collection's name — in its private on-device storage until it
-      can be sent to your PDS, then deletes it. The list of your collections
-      is kept the same way, so the app still works offline, and is replaced
-      each time it's fetched again. Signing out does not remove these.
+      can be sent to your PDS, then deletes it. The app keeps the list of your
+      collections, and of the shared collections you added links to, the same
+      way. Thus the app still works offline. The app replaces each list when
+      it gets the list again. Signing out does not remove these.
       Deleting the app does.
     </p>
 
@@ -100,7 +101,9 @@
       <li>
         <strong><code>plc.directory</code></strong> and
         <strong><code>public.api.bsky.app</code></strong>, to turn your handle
-        into the address of your PDS. (An account with a <code>did:web</code>
+        into the address of your PDS. The app also uses
+        <code>plc.directory</code> to find the PDS of a person who owns a
+        shared collection. (An account with a <code>did:web</code>
         identity is looked up on the site that identity names instead of
         <code>plc.directory</code>.) If that fails, the app asks the website
         your handle is named after instead (for <code>alice.example.com</code>,
@@ -108,17 +111,31 @@
         They use no credentials.
       </li>
       <li>
-        <strong><code>api.semble.so</code></strong>, for the link preview in
-        the share sheet. The app asks Semble's public
+        <strong><code>api.semble.so</code></strong>, for the link preview and
+        for shared collections. These requests use no credentials.
+        <br>
+        For the preview, the app asks Semble's public
         <code>network.cosmik.card.getUrlMetadata</code> endpoint for a title, a
-        description and an image. It sends only the link, with no credentials,
-        and Semble then fetches the page itself. The app makes no other request
-        to Semble.
+        description and an image. It sends only the link. Semble then fetches
+        the page itself.
+        <br>
+        For shared collections, the app asks Semble for the open collections
+        of other people that you added links to. It sends your account
+        identifier (your DID). When you search your collections, the app also
+        sends the search text to Semble, to find open collections from other
+        people.
         <br>
         A link with a query string (<code>?…</code>), a fragment
         (<code>#…</code>) or a username in it might carry something private,
         such as a sign-in code. For those links the app sends nothing until
         you tap <em>Load preview</em>.
+      </li>
+      <li>
+        <strong>The PDS of the owner of a shared collection</strong>, when you
+        choose that collection. The app reads the public record of the
+        collection, because the link to it must refer to that record. This
+        request uses no credentials. It tells that server which collection
+        you chose.
       </li>
       <li>
         <strong>The site that hosts the preview image</strong>, to show its

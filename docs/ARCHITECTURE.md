@@ -40,11 +40,12 @@ committed.
 1. The share extension receives a URL from the host app.
 2. It loads the `Session` from the shared Keychain (app group access group).
 3. It asks Semble's public `network.cosmik.card.getUrlMetadata` endpoint for a
-   title/description/image so the sheet can show a preview. This is the one
-   call to `api.semble.so`; it needs no authentication and failure is
-   non-fatal.
+   title/description/image so the sheet can show a preview. It needs no
+   authentication and failure is non-fatal.
 4. It lists the user's `network.cosmik.collection` records from their PDS
-   (`com.atproto.repo.listRecords`) to populate the collection picker.
+   (`com.atproto.repo.listRecords`) to populate the collection picker, and
+   — separately, under "Shared" — other people's open collections (see
+   "Shared collections" below).
 5. On **Add**, it builds a `PendingSave` (the URL, note, chosen collections,
    any collection created from the picker and not yet on the PDS, and a
    client-chosen ATProto TID rkey for each record it will write), enqueues it
@@ -83,6 +84,30 @@ committed.
    in any other sheet for the same DID (`SaveQueue.pendingCollections`),
    carrying the same rkey, so two saves that both pick it don't create it
    twice — whichever syncs first writes it and the other adopts it.
+
+**Shared collections** are other people's `OPEN` collections, which anyone
+may add cards to. A link to one is an ordinary `network.cosmik.collectionLink`
+in the user's own repo, `addedBy` the user, whose strong ref points at the
+other person's collection record — exactly what Semble's own server writes
+when a contributor adds to someone else's collection. Semble ignores
+collaborator lists in PDS records and has no endpoint for `CLOSED`
+collections someone collaborates on, so open collections are all there is.
+They come from Semble's public, unauthenticated API: with an empty search,
+`network.cosmik.collection.listContributed?identifier=<did>` (the open
+collections the user has added to, newest first); while typing,
+`network.cosmik.collection.search?accessType=OPEN`, 300 ms after the last
+keystroke, cancelling the previous search. Neither returns a cid, so
+selecting one reads its record unauthenticated from the owner's PDS
+(`com.atproto.repo.getRecord`, the PDS found through `IdentityResolver`),
+never through `PDSClient`, so the user's tokens never leave for another host.
+Semble's AppView resolves a link by the collection's URI and doesn't check
+the cid, so a cid once found is cached alongside the contributed list and
+lets that collection be linked offline. `save()` waits for any lookup still
+in flight; one that fails unticks the collection, marks it unavailable and
+stops the save so the user sees it go, rather than saving without it. None
+of this can fail the sheet: Semble or an owner's PDS being unreachable just
+leaves "Shared" showing what it can. `PendingSave` is unchanged — by the time
+a save is queued, every collection in it has a strong ref.
 
 Record shapes mirror the lexicons in
 [cosmik-network/semble](https://github.com/cosmik-network/semble/tree/main/src/modules/atproto/infrastructure/lexicons)
@@ -207,16 +232,18 @@ public struct SembleConfiguration {
 
 public enum CollectionAccessType: String, Codable { case open = "OPEN", closed = "CLOSED" }
 
-/// Exactly one of `ref`/`pending` is set: `ref` for a collection with a PDS
-/// record, `pending` for one created locally and not yet written — which has
-/// no cid, so there is deliberately no way to build a `StrongRef` for it.
+/// `ref` for a collection with a known PDS record; `pending` instead for one
+/// of the user's created locally and not yet written — which has no cid, so
+/// there is deliberately no way to build a `StrongRef` for it. A shared
+/// collection (`ownerHandle` set) has neither until its cid is looked up.
 public struct CollectionSummary: Identifiable, Hashable {
-    public let id: String       // = ref.uri, or pending's would-be uri
+    public let id: String       // = the collection's AT-URI (pending's would-be one)
     public let ref: StrongRef?
     public let pending: PendingCollection?
     public let name: String
     public let accessType: CollectionAccessType
     public let description: String?
+    public let ownerHandle: String?   // someone else's collection
 }
 
 /// A collection created locally and not yet written to the PDS. `rkey` is
@@ -237,6 +264,15 @@ public struct URLPreview: Codable, Equatable {
 public struct URLMetadataClient {
     public init(configuration: SembleConfiguration = .production, http: HTTPClient = URLSessionHTTPClient())
     public func preview(for url: URL) async throws -> URLPreview
+}
+
+/// Other people's open collections: listed and searched through Semble's
+/// public API, their cid read unauthenticated from the owner's PDS.
+public struct SharedCollectionsClient {
+    public init(configuration: SembleConfiguration = .production, http: HTTPClient = URLSessionHTTPClient())
+    public func contributed(by did: String) async throws -> [CollectionSummary]
+    public func search(_ text: String) async throws -> [CollectionSummary]
+    public func ref(for uri: String) async throws -> StrongRef
 }
 
 /// Persisted intent to save a URL: everything `Library.save(_:)` needs, plus
@@ -308,13 +344,14 @@ public final class SaveQueue {
     func pendingCollections(for did: String) -> [PendingCollection]
 }
 
-/// The last-known collection list per DID, cached in the app-group container
-/// so the picker has something to show before (or instead of) a network
-/// round trip.
+/// The last-known collection lists per DID (the user's own, and with
+/// `shared: true` the shared ones they've contributed to, cids included),
+/// cached in the app-group container so the picker has something to show
+/// before (or instead of) a network round trip.
 public final class CollectionsCache {
     public init(directory: URL)
-    public func load(for did: String) -> [CollectionSummary]?
-    public func save(_ collections: [CollectionSummary], for did: String)
+    public func load(for did: String, shared: Bool = false) -> [CollectionSummary]?
+    public func save(_ collections: [CollectionSummary], for did: String, shared: Bool = false)
 }
 ```
 
