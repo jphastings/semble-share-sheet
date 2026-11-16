@@ -31,7 +31,7 @@ Draft: the engineering shape below is a proposal; the visual treatment needs sha
 - **Who drains**: (1) the app on foreground, (2) the share extension on open, before/alongside its own save, (3) a `BGAppRefreshTask` registered by the app. A drain claims an item by atomic rename (`<id>.json` → `<id>.inflight`) so only one process works on it; stale claims expire.
 - **Collections cache**: persist `[CollectionSummary]` in the app group per DID. The picker shows the cache immediately and revalidates in the background (also makes the online sheet faster). Refs are resolved again at sync time; a collection deleted meanwhile skips that link and keeps the card.
 - **Creating a collection offline**: queue it as its own op with a client rkey (so its AT-URI is known and selectable straight away); links to it wait for its cid at sync.
-- **Session trouble at sync time**: expired session keeps the queue and the app asks for sign-in; sign-out with pending items must say what will be lost (or keep them for the same DID).
+- **Session trouble at sync time**: expired session keeps the queue and the app asks for sign-in; sign-out with pending items must say what will be lost (or keep them for the same DID). Built in SEMBLE-l893: they're kept for the same DID and post when it signs back in.
 - **No preview offline** (and SEMBLE-q5rw's consent rule still applies); the card is written without metadata and Semble's AppView crawls the page itself.
 
 ## Design (to shape with JP, not decided)

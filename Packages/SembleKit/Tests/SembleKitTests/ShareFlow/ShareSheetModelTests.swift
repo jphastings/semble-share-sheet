@@ -119,6 +119,18 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertTrue(model.canSave)
     }
 
+    func testAnExpiredSessionAtLoadStillLetsTheUserSaveButSaysSignInIsNeeded() async {
+        let library = FakeLibrary()
+        library.collectionsError = OAuthError.sessionExpired
+        let model = makeModel(library: library, metadata: Self.previewLoader(), url: url, did: did)
+
+        await model.load()
+
+        XCTAssertEqual(model.phase, .ready)
+        XCTAssertTrue(model.canSave)
+        XCTAssertTrue(model.sessionExpired)
+    }
+
     func testOfflineLoadShowsCachedCollectionsInsteadOfFailing() async {
         let cache = makeCache()
         cache.save([Self.collection("Cached")], for: did)
@@ -307,10 +319,28 @@ final class ShareSheetModelTests: XCTestCase {
         XCTAssertLessThanOrEqual(queuedAttempt.savedAt, Date())
 
         library.saveError = nil
-        await queue.drain(for: did, using: library)
+        try await queue.drain(for: did, using: library)
 
         XCTAssertEqual(library.savedRequests.count, 2)
         XCTAssertEqual(library.savedRequests.last?.savedAt, queuedAttempt.savedAt, "the drain must write the original tap time, not the sync time")
+    }
+
+    func testASaveWithAnExpiredSessionStaysQueuedAndWaitsForSignIn() async throws {
+        let library = FakeLibrary()
+        library.saveError = OAuthError.sessionExpired
+        let queue = makeQueue()
+        let model = ShareSheetModel(library: library, metadata: Self.previewLoader(), url: url, did: did, queue: queue)
+        await model.load()
+
+        await model.save()
+
+        XCTAssertEqual(model.phase, .awaitingSignIn)
+        XCTAssertTrue(model.sessionExpired)
+
+        library.saveError = nil
+        try await queue.drain(for: did, using: library)
+
+        XCTAssertEqual(library.savedRequests.count, 2, "signing back in and draining should post the queued save")
     }
 
     func testSaveIsIgnoredBeforeLoading() async {

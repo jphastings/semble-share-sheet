@@ -58,7 +58,7 @@ final class FakeRecordStore: RecordStore, @unchecked Sendable {
     var createErrorAtCall: Int?
     private var createCallCount = 0
 
-    init(did: String = "did:plc:test") {
+    init(did: String = "did:plc:alice") {
         self.storedDID = did
     }
 

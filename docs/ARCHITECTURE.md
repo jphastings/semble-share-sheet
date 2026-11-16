@@ -50,7 +50,8 @@ committed.
    client-chosen ATProto TID rkey for each record it will write), enqueues it
    in the app-group `SaveQueue`, and tries it immediately. If the PDS is
    unreachable the item stays queued and the sheet still dismisses; nothing
-   is lost. Writing a `PendingSave` creates, in order:
+   is lost. If the session has expired the item stays queued too, and the
+   sheet stays open to say it will post once the user logs in again. Writing a `PendingSave` creates, in order:
    - a `network.cosmik.collection` record for each collection the save is
      creating (see "Creating a collection" below);
    - a `network.cosmik.card` record of type `URL`;
@@ -65,9 +66,11 @@ committed.
    `SembleLibrary` treats a rejected create at an already-used rkey as
    "already written" and adopts the existing record instead of duplicating
    it. The share extension can die the moment its sheet closes, so nothing
-   about this relies on the process surviving; the app (on foreground) and
-   the extension (on open) both drain whatever is left in the queue for the
-   signed-in DID.
+   about this relies on the process surviving; the app (on launch,
+   foreground and sign-in) and the extension (on open) both drain whatever
+   is left in the queue for the signed-in DID. `SembleLibrary` refuses to
+   write a save made by any other account, so a queued save waits through
+   a sign-out, or another account's sign-in, for its own account.
 
    **Creating a collection** from the picker is local and instant, online or
    offline — one code path, no network call: it mints a `PendingCollection`
@@ -259,6 +262,9 @@ public protocol Library: Sendable {
     func save(_ pending: PendingSave) async throws -> SaveResult
 }
 
+/// `save` throws `SembleLibraryError.differentAccount`, writing nothing,
+/// for a `PendingSave` whose `did` isn't the signed-in account's.
+
 public actor SembleLibrary: Library {
     public init(pds: PDSClient, configuration: SembleConfiguration = .production)
 }
@@ -280,14 +286,17 @@ public final class SaveQueue {
     public init(directory: URL)
     public func enqueue(_ pending: PendingSave) throws
     public func remove(_ id: UUID)
-    enum Attempt: Equatable { case saved, queued, failed(String) }
+    enum Attempt: Equatable { case saved, queued, needsSignIn, failed(String) }
     /// Claims and tries `pending` once, right away. A permanent failure
     /// removes the item (the caller is showing the error live); a
-    /// transient one releases the claim so the item stays queued.
+    /// transient one releases the claim so the item stays queued
+    /// (`.needsSignIn` when the session has expired).
     @discardableResult func attempt(_ pending: PendingSave, using library: any Library) async -> Attempt
     /// Tries every item queued for `did`; another DID's items are left
     /// completely untouched. A permanent failure is parked as `.failed`.
-    func drain(for did: String, using library: any Library) async
+    /// A dead session stops the drain, leaves everything queued and is
+    /// rethrown as `OAuthError.sessionExpired`.
+    func drain(for did: String, using library: any Library) async throws
     /// Collections created by saves still waiting to sync for `did` — so a
     /// second sheet can offer one an earlier, still-offline save already
     /// created instead of risking a duplicate.
@@ -309,18 +318,29 @@ public final class CollectionsCache {
 would, so the share extension's own save and a background drain can never
 both write the same item. A reachable PDS ends `.saved`; an unreachable one
 ends a new `.queued` phase (the sheet still dismisses; the item stays on
-disk); a permanent failure (bad URL, note too long, a non-session 4xx) ends
+disk); an expired session ends `.awaitingSignIn` (the item stays on disk
+and the sheet stays open, saying the user needs to log in again); a
+permanent failure (bad URL, note too long, a non-session 4xx) ends
 `.failed` as before, with the item removed from the queue — the user is
 looking at the message and a retry re-enqueues the same `PendingSave`.
 `ShareSheetModel.load()` shows a cached collection list immediately if one
 exists, then replaces it from the network; a transient refresh failure
 leaves the cache (or an empty list) on screen instead of failing the sheet,
-since saving without collections has to work offline.
+since saving without collections has to work offline. An expired session
+found while loading still lets the user save, and sets `sessionExpired` so
+the sheet can say why it won't post yet.
 
 Who drains: the share extension, in the background as its sheet opens
-(before/alongside its own save); the app, when `scenePhase` becomes
-`.active` while signed in. Both go through the same `SaveQueue`, keyed by
-the app group, so either can pick up what the other left behind.
+(before/alongside its own save); the app, whenever `scenePhase` is
+`.active` (launch included) and right after signing in. On each foreground
+the app first re-reads the session from the Keychain, so one the extension
+found dead shows the sign-in screen; a drain that finds the session dead
+signs the app out locally the same way. Either way the queued saves stay,
+and post once that account signs back in. Both go through the same
+`SaveQueue`, keyed by the app group, so either can pick up what the other
+left behind. Each drain runs under a background-task assertion (an
+expiring activity in the extension) so a token refresh isn't suspended
+between the server rotating the refresh token and the Keychain saving it.
 
 ## Errors
 

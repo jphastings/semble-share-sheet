@@ -78,6 +78,9 @@ public final class SaveQueue: @unchecked Sendable {
         /// Still queued, either because the write failed transiently or
         /// because another process already had it claimed.
         case queued
+        /// Still queued, but the session is dead: it posts only once the
+        /// user signs in again.
+        case needsSignIn
         case failed(String)
     }
 
@@ -99,13 +102,16 @@ public final class SaveQueue: @unchecked Sendable {
                 return .failed(error.localizedDescription)
             }
             release(pending.id)
-            return .queued
+            return isSessionExpired(error) ? .needsSignIn : .queued
         }
     }
 
     /// Tries every item queued for `did`; items belonging to another DID are
-    /// left completely untouched (not even claimed).
-    public func drain(for did: String, using library: any Library) async {
+    /// left completely untouched (not even claimed). Failures are handled
+    /// per item, except a dead session: that stops the drain, leaves the
+    /// rest queued, and is rethrown as `OAuthError.sessionExpired` so the
+    /// caller can ask the user to sign in again.
+    public func drain(for did: String, using library: any Library) async throws {
         reclaimAbandonedClaims()
         for id in queuedIDs() {
             guard let peeked = try? peek(id), peeked.did == did else { continue }
@@ -114,6 +120,10 @@ public final class SaveQueue: @unchecked Sendable {
                 _ = try await library.save(pending)
                 delete(id, "inflight")
             } catch {
+                if isSessionExpired(error) {
+                    release(id)
+                    throw error
+                }
                 if isPermanentFailure(error) {
                     // ponytail: parked items are invisible until there's an
                     // app-side pending/failed list (SEMBLE-16dh's own
