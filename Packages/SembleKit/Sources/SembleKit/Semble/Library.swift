@@ -8,11 +8,13 @@ public enum CollectionAccessType: String, Codable, CaseIterable, Sendable {
 }
 
 /// A collection as the picker needs it: enough to show it and to link a card
-/// to it. Exactly one of `ref`/`pending` is set: `ref` is the strong ref a
-/// `CollectionLinkRecord` must carry, for a collection that already has a
-/// record on the PDS; `pending` is set instead for one created locally and
-/// not yet written — it has no cid, so there is deliberately no way to build
-/// a `StrongRef` for it (which could otherwise reach a link record empty).
+/// to it. `ref` is the strong ref a `CollectionLinkRecord` must carry, and
+/// is set for a collection whose record (and so cid) is known. `pending` is
+/// set instead for one of the user's own created locally and not yet
+/// written — it has no cid, so there is deliberately no way to build a
+/// `StrongRef` for it (which could otherwise reach a link record empty). A
+/// shared collection (someone else's, `ownerHandle` set) has neither until
+/// its cid is looked up; see `SharedCollectionsClient.ref(for:)`.
 public struct CollectionSummary: Identifiable, Hashable, Sendable, Codable {
     public let id: String
     public let ref: StrongRef?
@@ -20,15 +22,29 @@ public struct CollectionSummary: Identifiable, Hashable, Sendable, Codable {
     public let name: String
     public let accessType: CollectionAccessType
     public let description: String?
+    /// The owner's handle, for a collection that isn't the user's own.
+    public let ownerHandle: String?
 
-    /// A collection that already has a record on the PDS.
-    public init(ref: StrongRef, name: String, accessType: CollectionAccessType, description: String? = nil) {
+    /// A collection that already has a record on a PDS.
+    public init(ref: StrongRef, name: String, accessType: CollectionAccessType, description: String? = nil, ownerHandle: String? = nil) {
         self.id = ref.uri
         self.ref = ref
         self.pending = nil
         self.name = name
         self.accessType = accessType
         self.description = description
+        self.ownerHandle = ownerHandle
+    }
+
+    /// Someone else's collection whose cid isn't known yet.
+    public init(sharedURI uri: String, name: String, accessType: CollectionAccessType, description: String? = nil, ownerHandle: String?) {
+        self.id = uri
+        self.ref = nil
+        self.pending = nil
+        self.name = name
+        self.accessType = accessType
+        self.description = description
+        self.ownerHandle = ownerHandle
     }
 
     /// A collection created locally and not yet written to the PDS.
@@ -39,6 +55,12 @@ public struct CollectionSummary: Identifiable, Hashable, Sendable, Codable {
         self.name = pending.name
         self.accessType = pending.accessType
         self.description = nil
+        self.ownerHandle = nil
+    }
+
+    /// This collection with its cid looked up.
+    func with(ref: StrongRef) -> CollectionSummary {
+        CollectionSummary(ref: ref, name: name, accessType: accessType, description: description, ownerHandle: ownerHandle)
     }
 }
 

@@ -40,8 +40,7 @@ public enum URLMetadataError: LocalizedError, Equatable {
 }
 
 /// Asks Semble's public `network.cosmik.card.getUrlMetadata` endpoint for a
-/// URL's title, description and image. This is the only call to
-/// `api.semble.so`; it needs no authentication.
+/// URL's title, description and image. It needs no authentication.
 public struct URLMetadataClient: Sendable {
     /// Short: the preview is best-effort and must never hold up the sheet.
     private static let timeout: TimeInterval = 5
