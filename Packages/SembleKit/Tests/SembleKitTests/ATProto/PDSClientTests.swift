@@ -212,6 +212,30 @@ final class PDSClientTests: XCTestCase {
     // An invalid_grant for the CURRENT (not stale) refresh token still
     // clears the store: see `test_aDeadRefreshTokenSurfacesAsSessionExpiredAndForgetsTheSession` above.
 
+    func test_twoClientsSharingASessionSpendItsRefreshTokenOnlyOnce() async throws {
+        // Like the app and the share extension: separate clients, one store,
+        // one lock file. The bsky PDS deletes the whole session when a
+        // refresh token is replayed, so only one of them may refresh.
+        let lockURL = FileManager.default.temporaryDirectory.appendingPathComponent("refresh-\(UUID().uuidString).lock")
+        defer { try? FileManager.default.removeItem(at: lockURL) }
+        stub.on(Fixtures.tokenEndpoint) { _ in
+            Thread.sleep(forTimeInterval: 0.2)
+            return HTTPResponse(statusCode: 200, headers: ["Content-Type": "application/json"], body: Data(Fixtures.tokenResponse(accessToken: "access-1", refreshToken: "refresh-1").utf8))
+        }
+        stub.on(Self.createRecord, json: Self.strongRefJSON)
+        let expired = session(expiry: Date().addingTimeInterval(-60))
+        try store.save(expired)
+        let app = PDSClient(session: expired, sessionStore: store, configuration: Fixtures.configuration, http: stub, refreshLockURL: lockURL)
+        let shareExtension = PDSClient(session: expired, sessionStore: store, configuration: Fixtures.configuration, http: stub, refreshLockURL: lockURL)
+
+        async let fromApp = app.createRecord(collection: "app.example.record", record: TestRecord(text: "a"))
+        async let fromExtension = shareExtension.createRecord(collection: "app.example.record", record: TestRecord(text: "b"))
+        _ = try await (fromApp, fromExtension)
+
+        XCTAssertEqual(stub.requests(to: Fixtures.tokenEndpoint).count, 1)
+        XCTAssertEqual(stub.requests(to: Self.createRecord).compactMap { authorization(of: $0) }, ["DPoP access-1", "DPoP access-1"])
+    }
+
     // MARK: - Records
 
     func test_createRecordSendsTheRecordAndReturnsItsStrongRef() async throws {

@@ -169,8 +169,13 @@ public struct RecordPage<Record: Decodable> { records: [RecordEnvelope<Record>];
 /// store. It never opens a browser; a dead refresh token surfaces as
 /// `OAuthError.sessionExpired` and the stored session is cleared. A dropped
 /// connection surfaces as a plain `URLError` — nothing here wraps it.
+/// Refreshes are serialised across processes by a `flock` on
+/// `refreshLockURL` (in the app group): refresh tokens are single-use, and
+/// the bsky PDS deletes the whole session when one is replayed, so a client
+/// that waited on the lock re-reads the store and uses the token the other
+/// process just rotated.
 public actor PDSClient {
-    public init(session: Session, sessionStore: SessionStore, configuration: OAuthClientConfiguration, http: HTTPClient = URLSessionHTTPClient())
+    public init(session: Session, sessionStore: SessionStore, configuration: OAuthClientConfiguration, http: HTTPClient = URLSessionHTTPClient(), refreshLockURL: URL? = nil)
     public var did: String { get async }
     /// `rkey` is omitted from the request when `nil` (the PDS assigns the
     /// key); passing one makes the write idempotent — see `TID`.
