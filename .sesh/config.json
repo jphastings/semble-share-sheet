@@ -1,0 +1,4 @@
+{
+  "setup": "xcodegen generate && swift package resolve --package-path Packages/SembleKit",
+  "ports": 0
+}
