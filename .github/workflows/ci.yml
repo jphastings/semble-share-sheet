@@ -15,22 +15,22 @@ permissions:
 jobs:
   package-tests:
     name: SembleKit tests
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: '27'
 
       - name: Cache SwiftPM build directory
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: Packages/SembleKit/.build
-          key: ${{ runner.os }}-sembleskit-${{ hashFiles('Packages/SembleKit/Package.swift', 'Packages/SembleKit/Package.resolved') }}
+          key: ${{ runner.os }}-xcode27-sembleskit-${{ hashFiles('Packages/SembleKit/Package.swift', 'Packages/SembleKit/Package.resolved') }}
           restore-keys: |
-            ${{ runner.os }}-sembleskit-
+            ${{ runner.os }}-xcode27-sembleskit-
 
       - name: Swift version
         run: swift --version
@@ -40,14 +40,14 @@ jobs:
 
   app-build:
     name: Build app (iOS Simulator)
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: latest-stable
+          xcode-version: '27'
 
       - name: Install XcodeGen and xcbeautify
         run: brew install xcodegen xcbeautify
