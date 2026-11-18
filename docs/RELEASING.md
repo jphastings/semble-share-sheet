@@ -135,7 +135,7 @@ before archiving.
 ## What the workflow does
 
 1. Checks that every secret above is present.
-2. Selects the latest stable Xcode, installs XcodeGen, and installs fastlane
+2. Selects Xcode 27 on GitHub's `xcode-27` runner image, installs XcodeGen, and installs fastlane
    with `bundle install` (cached).
 3. Creates a temporary keychain, imports the certificate, and installs the
    two profiles, following GitHub's guide
