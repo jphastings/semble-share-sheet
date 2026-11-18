@@ -58,6 +58,10 @@ public final class ShareSheetModel: ObservableObject {
     /// Other people's open collections the user has added cards to, most
     /// recent first: cached, then refreshed by `load()`.
     @Published public private(set) var contributedCollections: [CollectionSummary] = []
+    /// Everyone's open collections, most recently updated first: offered in
+    /// place of `contributedCollections` when the user hasn't contributed to
+    /// any yet. Never cached.
+    @Published private var everyonesCollections: [CollectionSummary] = []
     /// URIs of the collections the card will be added to, own and shared alike.
     @Published public var selected: Set<String> = []
     /// The collection picker's search / create text. Changing it searches
@@ -168,16 +172,17 @@ public final class ShareSheetModel: ObservableObject {
     }
 
     /// Other people's collections to offer. With a blank query, the ones the
-    /// user has contributed to, after any ticked from an earlier search (so
-    /// they can still be seen and unticked). While searching, the search's
+    /// user has contributed to (or, if none, everyone's open ones), after any
+    /// ticked from an earlier search (so they can still be seen and unticked). While searching, the search's
     /// results — or, before any arrive or if it fails, the contributed ones
     /// whose name matches.
     public var visibleSharedCollections: [CollectionSummary] {
         let needle = creationName
         let listed: [CollectionSummary]
         if needle.isEmpty {
-            let contributed = Set(contributedCollections.map(\.id))
-            listed = selectedShared.filter { !contributed.contains($0.id) } + contributedCollections
+            let browsing = contributedCollections.isEmpty ? everyonesCollections : contributedCollections
+            let browsed = Set(browsing.map(\.id))
+            listed = selectedShared.filter { !browsed.contains($0.id) } + browsing
         } else {
             listed = searchResults ?? contributedCollections.filter { $0.name.localizedCaseInsensitiveContains(needle) }
         }
@@ -331,6 +336,11 @@ public final class ShareSheetModel: ObservableObject {
             guard let fetched = try? await shared.contributed(by: did) else { return }
             contributedCollections = remember(fetched)
             cacheContributed()
+            // As Semble's browser extension does: someone new to shared
+            // collections gets everyone's open ones to browse instead.
+            if contributedCollections.isEmpty, let everyone = try? await shared.search("") {
+                everyonesCollections = remember(everyone)
+            }
         }
     }
 

@@ -30,6 +30,7 @@ public struct SharedCollectionsClient: Sendable {
     }
 
     /// Open collections matching `text`, anyone's (the user's own included).
+    /// Empty `text` matches every open collection, most recently updated first.
     public func search(_ text: String) async throws -> [CollectionSummary] {
         try await collections("network.cosmik.collection.search", query: [
             "searchText": text,

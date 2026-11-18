@@ -94,9 +94,12 @@ collaborator lists in PDS records and has no endpoint for `CLOSED`
 collections someone collaborates on, so open collections are all there is.
 They come from Semble's public, unauthenticated API: with an empty search,
 `network.cosmik.collection.listContributed?identifier=<did>` (the open
-collections the user has added to, newest first); while typing,
-`network.cosmik.collection.search?accessType=OPEN`, 300 ms after the last
-keystroke, cancelling the previous search. Neither returns a cid, so
+collections the user has added to, newest first) or, if that's empty, as
+Semble's browser extension does, the search below with empty text
+(everyone's open collections, most recently updated first; not cached);
+while typing, `network.cosmik.collection.search?accessType=OPEN`, 300 ms
+after the last keystroke, cancelling the previous search. Neither returns a
+cid, so
 selecting one reads its record unauthenticated from the owner's PDS
 (`com.atproto.repo.getRecord`, the PDS found through `IdentityResolver`),
 never through `PDSClient`, so the user's tokens never leave for another host.

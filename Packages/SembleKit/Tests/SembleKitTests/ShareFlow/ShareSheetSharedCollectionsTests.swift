@@ -60,6 +60,22 @@ final class ShareSheetSharedCollectionsTests: XCTestCase {
         XCTAssertEqual(model.visibleSharedCollections.first?.ownerHandle, "bob.test")
     }
 
+    func testSomeoneWhoHasContributedNowhereBrowsesEveryonesOpenCollectionsWithoutCachingThem() async {
+        let cache = CollectionsCache(directory: temporaryDirectory())
+        let http = StubHTTPClient()
+        http.on(contributedEndpoint, json: SharedFixtures.page([]))
+        http.on(searchEndpoint, json: SharedFixtures.page([
+            (uri: alicesOpen, name: "Reading", handle: "alice.test"),
+            (uri: bobsRecipes, name: "Recipes", handle: "bob.test"),
+        ]))
+        let model = makeModel(http: http, cache: cache)
+
+        await load(model)
+
+        XCTAssertEqual(model.visibleSharedCollections.map(\.name), ["Recipes"])
+        XCTAssertEqual(cache.load(for: did, shared: true), [], "they aren't collections the user contributed to")
+    }
+
     func testSearchingShowsMatchingOpenCollectionsButNotTheUsersOwnOrRepeats() async {
         let http = StubHTTPClient()
         http.on(contributedEndpoint, json: SharedFixtures.page([(uri: bobsLinks, name: "Links", handle: "bob.test")]))
@@ -82,7 +98,7 @@ final class ShareSheetSharedCollectionsTests: XCTestCase {
 
     func testTypingQuicklySearchesOnlyForTheFinalText() async throws {
         let http = StubHTTPClient()
-        http.on(contributedEndpoint, json: SharedFixtures.page([]))
+        http.on(contributedEndpoint, json: SharedFixtures.page([(uri: bobsLinks, name: "Links", handle: "bob.test")]))
         http.on(searchEndpoint, json: SharedFixtures.page([]))
         let model = makeModel(http: http)
         model.searchDelay = 50_000_000
