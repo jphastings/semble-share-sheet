@@ -53,11 +53,34 @@ public final class ShareSheetModel: ObservableObject {
     @Published public private(set) var previewAwaitingConfirmation = false
     /// True while a preview fetch — automatic or via `loadPreview()` — is in flight.
     @Published public private(set) var isLoadingPreview = false
+    /// The user's own collections, including any created locally and not yet written.
     @Published public private(set) var collections: [CollectionSummary] = []
-    /// URIs of the collections the card will be added to.
+    /// Other people's open collections the user has added cards to, most
+    /// recent first: cached, then refreshed by `load()`.
+    @Published public private(set) var contributedCollections: [CollectionSummary] = []
+    /// Everyone's open collections, most recently updated first: offered in
+    /// place of `contributedCollections` when the user hasn't contributed to
+    /// any yet. Never cached.
+    @Published private var everyonesCollections: [CollectionSummary] = []
+    /// URIs of the collections the card will be added to, own and shared alike.
     @Published public var selected: Set<String> = []
-    /// The collection picker's search / create text.
-    @Published public var query: String = ""
+    /// The collection picker's search / create text. Changing it searches
+    /// shared collections (see `visibleSharedCollections`).
+    @Published public var query: String = "" {
+        didSet {
+            if query != oldValue { searchShared() }
+        }
+    }
+    /// Shared collections whose record couldn't be read just now, so they
+    /// can't be linked; selecting one again tries again.
+    @Published public private(set) var unavailableCollections: Set<String> = []
+    /// The latest shared search's results, kept while a newer search is
+    /// pending so the list doesn't flicker with every keystroke. `nil` with a
+    /// blank query, before the first answer, or when the last search failed.
+    @Published private var searchResults: [CollectionSummary]?
+    /// Every shared collection seen in this sheet, by URI — carrying its ref
+    /// once looked up — so a selection survives the list it came from changing.
+    @Published private var knownShared: [String: CollectionSummary] = [:]
     /// Free text saved as a `NOTE` card attached to the URL card. Whitespace-only is ignored.
     @Published public var note: String = ""
     /// True once the PDS has said the session is dead. Saving still works —
@@ -73,6 +96,16 @@ public final class ShareSheetModel: ObservableObject {
     private let did: String?
     private let queue: SaveQueue
     private let collectionsCache: CollectionsCache?
+    private let shared: SharedCollectionsClient?
+
+    /// How long typing has to pause before shared collections are searched.
+    var searchDelay: UInt64 = 300_000_000
+    /// The latest shared-collection search, cancelled when the query changes again.
+    private(set) var sharedSearch: Task<Void, Never>?
+    /// `load()`'s refresh of `contributedCollections`, which never holds up `.ready`.
+    private(set) var contributedRefresh: Task<Void, Never>?
+    /// In-flight ref lookups for selected shared collections, by URI.
+    private var refLookups: [String: Task<Void, Never>] = [:]
 
     /// Set once collections have been fetched successfully; from then on a
     /// failure means a *save* failed and the form stays available for retry.
@@ -99,13 +132,15 @@ public final class ShareSheetModel: ObservableObject {
     ///   - did: The signed-in user's DID, so a save can be queued against it. `nil` alongside `library == nil`.
     ///   - queue: Where a save that can't reach the PDS right away is kept until something drains it.
     ///   - collectionsCache: Shows a cached collection list before (or instead of) a network fetch. `nil` skips caching.
+    ///   - shared: Lists, searches and looks up other people's open collections. `nil` offers only the user's own.
     public init(
         library: (any Library)?,
         metadata: @escaping MetadataLoader,
         url: URL?,
         did: String?,
         queue: SaveQueue,
-        collectionsCache: CollectionsCache? = nil
+        collectionsCache: CollectionsCache? = nil,
+        shared: SharedCollectionsClient? = nil
     ) {
         self.library = library
         self.metadata = metadata
@@ -113,6 +148,7 @@ public final class ShareSheetModel: ObservableObject {
         self.did = did
         self.queue = queue
         self.collectionsCache = collectionsCache
+        self.shared = shared
     }
 
     // MARK: Derived state
@@ -128,23 +164,49 @@ public final class ShareSheetModel: ObservableObject {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Collections matching the query (all of them when the query is blank).
+    /// The user's own collections matching the query (all of them when the query is blank).
     public var visibleCollections: [CollectionSummary] {
         let needle = creationName
         guard !needle.isEmpty else { return collections }
         return collections.filter { $0.name.localizedCaseInsensitiveContains(needle) }
     }
 
-    /// The collections currently ticked, in display order.
-    public var selectedCollections: [CollectionSummary] {
-        collections.filter { selected.contains($0.id) }
+    /// Other people's collections to offer. With a blank query, the ones the
+    /// user has contributed to (or, if none, everyone's open ones), after any
+    /// ticked from an earlier search (so they can still be seen and unticked). While searching, the search's
+    /// results — or, before any arrive or if it fails, the contributed ones
+    /// whose name matches.
+    public var visibleSharedCollections: [CollectionSummary] {
+        let needle = creationName
+        let listed: [CollectionSummary]
+        if needle.isEmpty {
+            let browsing = contributedCollections.isEmpty ? everyonesCollections : contributedCollections
+            let browsed = Set(browsing.map(\.id))
+            listed = selectedShared.filter { !browsed.contains($0.id) } + browsing
+        } else {
+            listed = searchResults ?? contributedCollections.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+        }
+        return listed.map { knownShared[$0.id] ?? $0 }
     }
 
-    /// True when the query names a collection that doesn't exist yet, so the
-    /// picker should offer a "Create new collection" row. Creating is local
-    /// and instant (see `createCollection()`), so this needs no network —
-    /// only somewhere to name-clash-check against, which the cache or an
-    /// empty list both satisfy just as well as a live fetch.
+    /// The collections currently ticked: own ones in display order, then shared ones.
+    public var selectedCollections: [CollectionSummary] {
+        collections.filter { selected.contains($0.id) } + selectedShared
+    }
+
+    private var selectedShared: [CollectionSummary] {
+        knownShared.values
+            .filter { selected.contains($0.id) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// True when the query names a collection the user doesn't have yet, so
+    /// the picker should offer a "Create new collection" row. Creating is
+    /// local and instant (see `createCollection()`), so this needs no
+    /// network — only somewhere to name-clash-check against, which the cache
+    /// or an empty list both satisfy just as well as a live fetch. Only the
+    /// user's own collections clash: a shared one by the same name is
+    /// someone else's.
     public var canCreateCollection: Bool {
         guard library != nil, did != nil, hasLoaded else { return false }
         let name = creationName
@@ -215,6 +277,8 @@ public final class ShareSheetModel: ObservableObject {
             previewAwaitingConfirmation = true
         }
 
+        loadContributed()
+
         do {
             let fetched = try await library.myCollections()
             collections = withPendingCollections(fetched)
@@ -260,6 +324,91 @@ public final class ShareSheetModel: ObservableObject {
         return fetched + pending
     }
 
+    /// Shows the cached shared collections the user has contributed to, then
+    /// refreshes them in the background. Any failure just leaves what's
+    /// there: shared collections are extra, and must never fail the sheet.
+    private func loadContributed() {
+        guard let shared, let did else { return }
+        if let cached = collectionsCache?.load(for: did, shared: true) {
+            contributedCollections = remember(cached)
+        }
+        contributedRefresh = Task {
+            guard let fetched = try? await shared.contributed(by: did) else { return }
+            contributedCollections = remember(fetched)
+            cacheContributed()
+            // As Semble's browser extension does: someone new to shared
+            // collections gets everyone's open ones to browse instead.
+            if contributedCollections.isEmpty, let everyone = try? await shared.search("") {
+                everyonesCollections = remember(everyone)
+            }
+        }
+    }
+
+    /// Restarts the shared search for the current query after `searchDelay`,
+    /// cancelling the previous one (request included).
+    private func searchShared() {
+        sharedSearch?.cancel()
+        let text = creationName
+        guard let shared, !text.isEmpty else {
+            searchResults = nil
+            sharedSearch = nil
+            return
+        }
+        let delay = searchDelay
+        sharedSearch = Task {
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            let found = try? await shared.search(text)
+            guard !Task.isCancelled else { return }
+            searchResults = found.map(remember)
+        }
+    }
+
+    /// `found` without the user's own collections (a search covers everyone's)
+    /// or repeats, each one recorded in `knownShared` — keeping a ref already
+    /// looked up, since Semble's API never carries one.
+    private func remember(_ found: [CollectionSummary]) -> [CollectionSummary] {
+        var seen = Set<String>()
+        let others = found.filter { ATURI($0.id)?.did != did && seen.insert($0.id).inserted }
+        for collection in others {
+            if collection.ref == nil, let ref = knownShared[collection.id]?.ref {
+                knownShared[collection.id] = collection.with(ref: ref)
+            } else {
+                knownShared[collection.id] = collection
+            }
+        }
+        return others
+    }
+
+    /// The contributed list with every ref looked up so far, so a cached
+    /// shared collection can be linked offline.
+    private func cacheContributed() {
+        guard let did else { return }
+        collectionsCache?.save(contributedCollections.map { knownShared[$0.id] ?? $0 }, for: did, shared: true)
+    }
+
+    /// Starts looking up the ref of a just-selected shared collection. If it
+    /// can't be found, the collection is unticked and marked unavailable
+    /// rather than quietly left out of the save.
+    private func lookUpRef(for collection: CollectionSummary) {
+        guard let shared, refLookups[collection.id] == nil else { return }
+        let id = collection.id
+        unavailableCollections.remove(id)
+        refLookups[id] = Task {
+            defer { refLookups[id] = nil }
+            do {
+                let ref = try await shared.ref(for: id)
+                knownShared[id] = (knownShared[id] ?? collection).with(ref: ref)
+                if contributedCollections.contains(where: { $0.id == id }) {
+                    cacheContributed()
+                }
+            } catch {
+                selected.remove(id)
+                unavailableCollections.insert(id)
+            }
+        }
+    }
+
     /// Fetches the preview for a URL that needed confirmation first. No-op if
     /// it's already loading, already loaded, or never needed confirmation.
     public func loadPreview() {
@@ -285,12 +434,16 @@ public final class ShareSheetModel: ObservableObject {
         toggle(uri: collection.id)
     }
 
-    /// Adds or removes a collection (by URI) from the selection.
+    /// Adds or removes a collection (by URI) from the selection. Selecting a
+    /// shared collection looks up its ref, if that isn't known yet.
     public func toggle(uri: String) {
         if selected.contains(uri) {
             selected.remove(uri)
         } else {
             selected.insert(uri)
+            if let collection = knownShared[uri], collection.ref == nil {
+                lookUpRef(for: collection)
+            }
         }
     }
 
@@ -326,6 +479,19 @@ public final class ShareSheetModel: ObservableObject {
     public func save() async {
         guard canSave, let library, let url, let did else { return }
         phase = .saving
+
+        // A shared collection ticked moments ago may still be looking up its
+        // ref; one that turns out to be unreachable is unticked, and the user
+        // gets to see that before anything is saved without it.
+        let wanted = selected
+        for lookup in wanted.compactMap({ refLookups[$0] }) {
+            await lookup.value
+        }
+        if let lost = wanted.subtracting(selected).compactMap({ knownShared[$0]?.name }).first {
+            failedStep = .save
+            phase = .failed("Couldn't reach “\(lost)”, so it's been unticked.")
+            return
+        }
 
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let noteText = trimmedNote.isEmpty ? nil : trimmedNote

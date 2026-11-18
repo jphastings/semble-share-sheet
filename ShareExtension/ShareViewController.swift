@@ -62,7 +62,8 @@ final class ShareViewController: UIViewController {
             url: url,
             did: session?.did,
             queue: AppEnvironment.saveQueue,
-            collectionsCache: AppEnvironment.collectionsCache
+            collectionsCache: AppEnvironment.collectionsCache,
+            shared: SharedCollectionsClient(http: URLSessionHTTPClient(defaultTimeout: Self.requestTimeout))
         )
         self.model = model
 

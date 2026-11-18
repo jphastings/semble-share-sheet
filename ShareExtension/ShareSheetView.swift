@@ -168,8 +168,6 @@ struct ShareSheetView: View {
             noteField
                 .disabled(model.phase == .saving)
 
-            Spacer(minLength: 0)
-
             bottomBar
         }
         .padding(.horizontal, 20)

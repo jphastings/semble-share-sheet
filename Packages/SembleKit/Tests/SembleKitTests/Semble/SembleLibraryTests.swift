@@ -61,6 +61,19 @@ final class SembleLibraryTests: XCTestCase {
         XCTAssertEqual(linkJSON["createdAt"] as? String, "2023-11-14T22:13:20.500Z")
     }
 
+    func testALinkToSomeoneElsesCollectionPointsAtTheirRecordButIsAddedByTheUser() async throws {
+        let store = FakeRecordStore(did: "did:plc:alice")
+        let library = makeLibrary(store: store)
+        let bobs = StrongRef(uri: "at://did:plc:bob/network.cosmik.collection/shared", cid: "bafybob")
+
+        _ = try await library.save(pendingSave(collections: [bobs]))
+
+        let linkJSON = try XCTUnwrap(store.writtenRecords(in: "network.cosmik.collectionLink").first?.json)
+        XCTAssertEqual(linkJSON["addedBy"] as? String, "did:plc:alice")
+        XCTAssertEqual((linkJSON["collection"] as? [String: Any])?["uri"] as? String, bobs.uri)
+        XCTAssertEqual((linkJSON["collection"] as? [String: Any])?["cid"] as? String, bobs.cid)
+    }
+
     func testSaveWithoutCollectionsWritesOnlyTheCard() async throws {
         let store = FakeRecordStore()
         let library = makeLibrary(store: store)

@@ -45,8 +45,11 @@ Sign-in requests the scope `atproto include:network.cosmik.authFull`. The
 `network.cosmik.authFull` permission set is published by Semble at
 `at://did:plc:b2p6rujcgpenbtcjposmjuc3/com.atproto.lexicon.schema/network.cosmik.authFull`
 and grants write access to the `network.cosmik.*` collections and nothing
-else. The only Semble endpoint the app calls is the public, unauthenticated
-`network.cosmik.card.getUrlMetadata`, for link previews. The
+else. The app calls three public, unauthenticated Semble endpoints:
+`network.cosmik.card.getUrlMetadata` for link previews, and
+`network.cosmik.collection.listContributed` and
+`network.cosmik.collection.search` to offer other people's open collections.
+The
 [privacy notice](https://semble-share.byjp.me/privacy.html)
 lists every host the app contacts.
 
