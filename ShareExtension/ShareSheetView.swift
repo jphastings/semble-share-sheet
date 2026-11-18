@@ -45,7 +45,7 @@ struct ShareSheetView: View {
             Button("Cancel", action: onCancel)
                 .font(.body)
                 .foregroundStyle(Color.sembleMutedText)
-                .disabled(model.phase == .saving || model.phase == .saved || model.phase == .queued)
+                .disabled(model.phase == .saving || model.phase == .saved || model.phase == .queued || model.phase == .awaitingSignIn)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -118,6 +118,23 @@ struct ShareSheetView: View {
                     .font(.title3.weight(.semibold))
                     .accessibilityLabel("Saved. It will be added to Semble once you're back online.")
             }
+        case .awaitingSignIn:
+            // Not auto-dismissed like `.queued`: nothing will post until
+            // the user acts, so they need to read this.
+            status {
+                Image(systemName: "person.crop.circle.badge.exclamationmark")
+                    .font(.system(size: 56))
+                    .foregroundStyle(Color.sembleOrange)
+                Text("Saved — will add once you log in")
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                Text(OAuthError.sessionExpired.localizedDescription)
+                    .foregroundStyle(Color.sembleMutedText)
+                    .multilineTextAlignment(.center)
+                Button("Done", action: onComplete)
+                    .buttonStyle(.semble)
+                    .padding(.top, 8)
+            }
         case .ready, .saving, .failed:
             form
         }
@@ -175,6 +192,12 @@ struct ShareSheetView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 10) {
+            if model.sessionExpired {
+                Text(OAuthError.sessionExpired.localizedDescription)
+                    .font(.footnote)
+                    .foregroundStyle(Color.sembleMutedText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if case .failed(let message) = model.phase {
                 Text(message)
                     .font(.footnote)

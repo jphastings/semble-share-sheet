@@ -77,7 +77,61 @@ final class SaveQueueTests: XCTestCase {
         XCTAssertFalse(anyFileExists(save.id), "the share sheet is showing the error live; nothing should be left to retry silently")
     }
 
+    func testAttemptWithAnExpiredSessionLeavesTheItemQueuedForSignIn() async throws {
+        let queue = queue()
+        let library = FakeLibrary()
+        library.saveError = OAuthError.sessionExpired
+        let save = pending()
+        try queue.enqueue(save)
+
+        let outcome = await queue.attempt(save, using: library)
+
+        XCTAssertEqual(outcome, .needsSignIn)
+        XCTAssertTrue(queuedFileExists(save.id))
+    }
+
+    func testAnotherAccountNeverPostsASaveButItsOwnAccountDoesOnceSignedBackIn() async throws {
+        let queue = queue()
+        let save = pending(did: "did:plc:alice")
+        try queue.enqueue(save)
+        let bobsRepo = FakeRecordStore(did: "did:plc:bob")
+        let alicesRepo = FakeRecordStore(did: "did:plc:alice")
+
+        let outcome = await queue.attempt(save, using: SembleLibrary(store: bobsRepo))
+        try await queue.drain(for: "did:plc:bob", using: SembleLibrary(store: bobsRepo))
+
+        XCTAssertEqual(outcome, .queued)
+        XCTAssertTrue(bobsRepo.writes.isEmpty, "nothing of Alice's may reach Bob's repo")
+        XCTAssertTrue(queuedFileExists(save.id))
+
+        try await queue.drain(for: "did:plc:alice", using: SembleLibrary(store: alicesRepo))
+
+        XCTAssertFalse(alicesRepo.writes.isEmpty)
+        XCTAssertFalse(anyFileExists(save.id))
+    }
+
     // MARK: - drain
+
+    func testDrainStopsAtAnExpiredSessionAndKeepsEverythingQueued() async throws {
+        let queue = queue()
+        let library = FakeLibrary()
+        library.saveError = OAuthError.sessionExpired
+        let first = pending()
+        let second = pending()
+        try queue.enqueue(first)
+        try queue.enqueue(second)
+
+        do {
+            try await queue.drain(for: "did:plc:alice", using: library)
+            XCTFail("the caller needs to hear the session is dead")
+        } catch {
+            XCTAssertEqual(error as? OAuthError, .sessionExpired)
+        }
+
+        XCTAssertEqual(library.savedRequests.count, 1, "no point trying the rest with a dead session")
+        XCTAssertTrue(queuedFileExists(first.id))
+        XCTAssertTrue(queuedFileExists(second.id))
+    }
 
     func testDrainWritesEveryQueuedItemForTheGivenDID() async throws {
         let queue = queue()
@@ -87,7 +141,7 @@ final class SaveQueueTests: XCTestCase {
         try queue.enqueue(first)
         try queue.enqueue(second)
 
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertEqual(Set(library.savedRequests.map(\.id)), Set([first.id, second.id]))
         XCTAssertFalse(anyFileExists(first.id))
@@ -102,7 +156,7 @@ final class SaveQueueTests: XCTestCase {
         try queue.enqueue(mine)
         try queue.enqueue(theirs)
 
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertEqual(library.savedRequests.map(\.id), [mine.id])
         XCTAssertTrue(queuedFileExists(theirs.id), "a foreign DID's item must still be queued, unclaimed")
@@ -115,7 +169,7 @@ final class SaveQueueTests: XCTestCase {
         let save = pending()
         try queue.enqueue(save)
 
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertTrue(failedFileExists(save.id))
         XCTAssertFalse(queuedFileExists(save.id))
@@ -128,13 +182,13 @@ final class SaveQueueTests: XCTestCase {
         let save = pending()
         try queue.enqueue(save)
 
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertTrue(queuedFileExists(save.id))
         XCTAssertEqual(library.savedRequests.count, 1)
 
         library.saveError = nil
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertEqual(library.savedRequests.count, 2, "the second drain should retry the still-queued item")
         XCTAssertFalse(anyFileExists(save.id))
@@ -149,7 +203,7 @@ final class SaveQueueTests: XCTestCase {
 
         async let drainA: Void = queueA.drain(for: "did:plc:alice", using: library)
         async let drainB: Void = queueB.drain(for: "did:plc:alice", using: library)
-        _ = await (drainA, drainB)
+        _ = try await (drainA, drainB)
 
         let counts = Dictionary(grouping: library.savedRequests, by: \.id).mapValues(\.count)
         XCTAssertEqual(counts.count, items.count, "every item should have been attempted")
@@ -167,7 +221,7 @@ final class SaveQueueTests: XCTestCase {
         try FileManager.default.moveItem(at: json, to: inflight)
         try? await Task.sleep(nanoseconds: 100_000_000)
 
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertEqual(library.savedRequests.map(\.id), [save.id], "the stale claim should have been reclaimed and retried")
         XCTAssertFalse(anyFileExists(save.id))
@@ -213,7 +267,7 @@ final class SaveQueueTests: XCTestCase {
         try queue.enqueue(save)
         let library = FakeLibrary()
         library.saveError = SembleLibraryError.unsupportedURL(URL(string: "https://example.com/a")!)
-        await queue.drain(for: "did:plc:alice", using: library) // permanent failure: parked as `.failed`
+        try await queue.drain(for: "did:plc:alice", using: library) // permanent failure: parked as `.failed`
 
         XCTAssertEqual(queue.pendingCollections(for: "did:plc:alice"), [])
     }
@@ -227,7 +281,7 @@ final class SaveQueueTests: XCTestCase {
         let save = PendingSave(did: "did:plc:alice", url: URL(string: "https://example.com")!, savedAt: tapTime)
         try queue.enqueue(save)
 
-        await queue.drain(for: "did:plc:alice", using: library)
+        try await queue.drain(for: "did:plc:alice", using: library)
 
         XCTAssertEqual(library.savedRequests.first?.savedAt, tapTime)
     }

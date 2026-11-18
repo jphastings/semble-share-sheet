@@ -39,10 +39,20 @@ final class ShareViewController: UIViewController {
 
         // Don't block the sheet on this: whatever's already queued from a
         // previous offline attempt gets a chance to go out now, but the
-        // sheet the user is looking at is for a new save.
+        // sheet the user is looking at is for a new save. The expiring
+        // activity keeps the extension alive after its sheet closes, so a
+        // refresh mid-drain isn't suspended before the rotated (single-use)
+        // refresh token reaches the Keychain. A dead session is the sheet's
+        // to report, not the drain's.
         if let session, let library {
-            Task.detached(priority: .utility) {
-                await AppEnvironment.saveQueue.drain(for: session.did, using: library)
+            ProcessInfo.processInfo.performExpiringActivity(withReason: "Post queued saves") { expired in
+                guard !expired else { return }
+                let finished = DispatchSemaphore(value: 0)
+                Task.detached(priority: .utility) {
+                    try? await AppEnvironment.saveQueue.drain(for: session.did, using: library)
+                    finished.signal()
+                }
+                finished.wait()
             }
         }
 

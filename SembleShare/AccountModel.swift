@@ -4,10 +4,11 @@ import OAuthenticator
 import Observation
 import SembleKit
 import SwiftUI
+import UIKit
 
 /// Owns the signed-in `Session` for the app: loads it from the shared
-/// Keychain, runs the OAuth sign-in through the system browser, and clears
-/// it on log out.
+/// Keychain, runs the OAuth sign-in through the system browser, posts saves
+/// queued for that account, and clears it on log out.
 @MainActor
 @Observable
 final class AccountModel {
@@ -20,6 +21,7 @@ final class AccountModel {
 
     private let sessionStore: any SessionStore
     private let oauth: OAuthClient
+    private var drainAssertion = UIBackgroundTaskIdentifier.invalid
 
     init(
         sessionStore: any SessionStore = AppEnvironment.sessionStore,
@@ -48,11 +50,51 @@ final class AccountModel {
             let session = try await oauth.signIn(account: account, openBrowser: openBrowser)
             try sessionStore.save(session)
             self.session = session
+            Task { await drainQueue() }
         } catch let authError as ASWebAuthenticationSessionError where authError.code == .canceledLogin {
             // The user closed the browser sheet; nothing to report.
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Picks up the session as the shared Keychain has it now, then posts
+    /// whatever is queued for that account. The share extension may have
+    /// cleared the session (its refresh token died) or rotated it since this
+    /// process last looked.
+    func refresh() async {
+        do {
+            session = try sessionStore.load()
+        } catch {
+            // An unreadable Keychain isn't a sign-out; keep what we have.
+        }
+        await drainQueue()
+    }
+
+    /// Posts the saves queued for the signed-in account. A dead session signs
+    /// the app out locally so the sign-in screen shows; the queued saves stay
+    /// and post once that account signs back in.
+    private func drainQueue() async {
+        guard let session, drainAssertion == .invalid else { return }
+        // A refresh rotates the single-use refresh token; being suspended
+        // before the new one reaches the Keychain would lose the session.
+        drainAssertion = UIApplication.shared.beginBackgroundTask(withName: "Post queued saves") { [weak self] in
+            self?.endDrainAssertion()
+        }
+        defer { endDrainAssertion() }
+        do {
+            try await AppEnvironment.saveQueue.drain(for: session.did, using: AppEnvironment.makeLibrary(session: session))
+        } catch {
+            if self.session?.did == session.did {
+                self.session = nil
+            }
+        }
+    }
+
+    private func endDrainAssertion() {
+        guard drainAssertion != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(drainAssertion)
+        drainAssertion = .invalid
     }
 
     /// Revokes the refresh token server-side (best effort; never blocks or

@@ -75,6 +75,9 @@ public enum SembleLibraryError: LocalizedError, Equatable {
     /// The note exceeds `network.cosmik.card`'s `noteContent.text` limit.
     /// Checked before anything is written, so a save never strands a card.
     case noteTooLong
+    /// The save was made by a different account than the one signed in.
+    /// Nothing is written; it stays queued for its own account.
+    case differentAccount
 
     public var errorDescription: String? {
         switch self {
@@ -82,6 +85,8 @@ public enum SembleLibraryError: LocalizedError, Equatable {
             return "Semble can only save web links (http or https)."
         case .noteTooLong:
             return "That note is too long to save — try trimming it."
+        case .differentAccount:
+            return "This save belongs to a different Semble account."
         }
     }
 }

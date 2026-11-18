@@ -15,21 +15,37 @@ public actor PDSClient {
     private let vault: SessionVault
     private let authenticator: Authenticator
 
+    /// - Parameter refreshLockURL: A file every process sharing
+    ///   `sessionStore` can open (the app group). Refreshes are serialised
+    ///   on it so two processes never spend the same single-use refresh
+    ///   token. `nil` refreshes without a cross-process lock.
     public init(
         session: Session,
         sessionStore: SessionStore,
         configuration: OAuthClientConfiguration,
-        http: HTTPClient = URLSessionHTTPClient()
+        http: HTTPClient = URLSessionHTTPClient(),
+        refreshLockURL: URL? = nil
     ) {
         let vault = SessionVault(session: session, store: sessionStore)
         self.vault = vault
 
         let expectedDID = session.did
-        let tokenHandling = Bluesky.tokenHandling(
+        let bluesky = Bluesky.tokenHandling(
             account: nil,
             server: session.authorizationServer,
             jwtGenerator: DPoPProofs.generator(for: session.dpopKey),
             validator: { response, _ in response.sub == expectedDID }
+        )
+        let tokenHandling = TokenHandling(
+            parConfiguration: bluesky.parConfiguration,
+            authorizationURLProvider: bluesky.authorizationURLProvider,
+            loginProvider: bluesky.loginProvider,
+            refreshProvider: bluesky.refreshProvider.map { refresh in
+                Self.serialisedRefresh(refresh, vault: vault, lock: FileLock(url: refreshLockURL))
+            },
+            responseStatusProvider: bluesky.responseStatusProvider,
+            dpopJWTGenerator: bluesky.dpopJWTGenerator,
+            pkce: bluesky.pkce
         )
         // OAuthenticator clears its storage whenever a refresh fails, even on
         // a dropped connection. That would log the user out for being
@@ -50,6 +66,29 @@ public actor PDSClient {
             ),
             urlLoader: http.urlResponseProvider
         )
+    }
+
+    /// Wraps OAuthenticator's refresh so "read the latest login, refresh it,
+    /// persist the result" happens under `lock`. The bsky PDS treats a
+    /// replayed refresh token as theft and deletes the whole session, so a
+    /// process that waited on the lock must use the login another process
+    /// just rotated rather than refresh the one it started with.
+    private static func serialisedRefresh(
+        _ refresh: @escaping TokenHandling.RefreshProvider,
+        vault: SessionVault,
+        lock: FileLock
+    ) -> TokenHandling.RefreshProvider {
+        { login, credentials, responseProvider in
+            try await lock.withLock {
+                let latest = vault.retrieveLogin()
+                if latest.refreshToken?.value != login.refreshToken?.value, latest.accessToken.valid {
+                    return latest
+                }
+                let refreshed = try await refresh(latest, credentials, responseProvider)
+                try vault.update(login: refreshed)
+                return refreshed
+            }
+        }
     }
 
     /// The account whose repository this client writes to.

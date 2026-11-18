@@ -84,8 +84,13 @@ public actor SembleLibrary: Library {
     /// same `PendingSave` — a retry, a drain racing a retry, two drains
     /// racing each other — writes each record at most once. New collections
     /// go first because the links need their strong refs, exactly like the
-    /// card needs to exist before anything links to it.
+    /// card needs to exist before anything links to it. A save made by
+    /// another account is refused with `.differentAccount` before anything
+    /// is written.
     public func save(_ pending: PendingSave) async throws -> SaveResult {
+        guard await store.did == pending.did else {
+            throw SembleLibraryError.differentAccount
+        }
         guard let scheme = pending.url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             throw SembleLibraryError.unsupportedURL(pending.url)
         }

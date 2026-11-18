@@ -112,7 +112,19 @@ enum AppEnvironment {
     /// are written back to `sessionStore` transparently. Pass a custom `requestTimeout`
     /// to override the default 60s request timeout.
     static func makePDSClient(session: Session, requestTimeout: TimeInterval? = nil) -> PDSClient {
-        PDSClient(session: session, sessionStore: sessionStore, configuration: oauthConfiguration, http: URLSessionHTTPClient(defaultTimeout: requestTimeout))
+        PDSClient(
+            session: session,
+            sessionStore: sessionStore,
+            configuration: oauthConfiguration,
+            http: URLSessionHTTPClient(defaultTimeout: requestTimeout),
+            refreshLockURL: refreshLockURL
+        )
+    }
+
+    /// Serialises token refreshes between the app and the extension. `nil`
+    /// without the app group, where they don't share a session anyway.
+    private static var refreshLockURL: URL? {
+        appGroupContainerURL?.appendingPathComponent("session-refresh.lock")
     }
 
     /// The Semble "library" (collections + save) for the signed-in user.

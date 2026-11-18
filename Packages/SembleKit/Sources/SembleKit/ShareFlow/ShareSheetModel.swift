@@ -27,6 +27,10 @@ public final class ShareSheetModel: ObservableObject {
         /// on disk and will go out the next time something drains the queue.
         /// The host dismisses this the same way it dismisses `.saved`.
         case queued
+        /// The save is queued on disk, but the session has expired: it will
+        /// only go out once the user signs in again through the app. Unlike
+        /// `.queued`, the host leaves this on screen so the user sees why.
+        case awaitingSignIn
         /// Loading or saving failed. The message is user-presentable.
         case failed(String)
         /// No `Session` was found; the user has to sign in through the app.
@@ -56,6 +60,10 @@ public final class ShareSheetModel: ObservableObject {
     @Published public var query: String = ""
     /// Free text saved as a `NOTE` card attached to the URL card. Whitespace-only is ignored.
     @Published public var note: String = ""
+    /// True once the PDS has said the session is dead. Saving still works —
+    /// it's queued under this DID — but nothing posts until the user signs
+    /// in again, so the sheet should say so.
+    @Published public private(set) var sessionExpired = false
 
     /// The URL being saved, or `nil` when the host shared nothing usable.
     public let url: URL?
@@ -147,7 +155,7 @@ public final class ShareSheetModel: ObservableObject {
     /// True when the form should be shown (as opposed to a full-screen status).
     public var showsForm: Bool {
         switch phase {
-        case .ready, .saving, .saved, .queued:
+        case .ready, .saving, .saved, .queued, .awaitingSignIn:
             return true
         case .failed:
             return hasLoaded
@@ -164,7 +172,7 @@ public final class ShareSheetModel: ObservableObject {
             return true
         case .failed:
             return failedStep == .save
-        case .loading, .saving, .saved, .queued, .notSignedIn, .noURL:
+        case .loading, .saving, .saved, .queued, .awaitingSignIn, .notSignedIn, .noURL:
             return false
         }
     }
@@ -218,6 +226,9 @@ public final class ShareSheetModel: ObservableObject {
             }
             phase = .ready
         } catch {
+            if isSessionExpired(error) {
+                sessionExpired = true
+            }
             if hasLoaded {
                 // Already showing something usable (cache, or an earlier
                 // successful load); a refresh failure doesn't take that away.
@@ -306,6 +317,8 @@ public final class ShareSheetModel: ObservableObject {
     /// - A reachable PDS: `.saved`, and the queued file is gone.
     /// - Unreachable (or a 401/429/5xx): `.queued`; the item stays on disk
     ///   for the next drain and the host dismisses the sheet regardless.
+    /// - The session has expired: `.awaitingSignIn`; the item stays on disk
+    ///   until the user signs in again.
     /// - A permanent failure (bad URL, note too long, a 4xx that isn't a
     ///   session problem): `.failed`, and the item is removed from the queue
     ///   — the user is looking at the message right here and a retry
@@ -344,6 +357,9 @@ public final class ShareSheetModel: ObservableObject {
             phase = .saved
         case .queued:
             phase = .queued
+        case .needsSignIn:
+            sessionExpired = true
+            phase = .awaitingSignIn
         case let .failed(message):
             queue.remove(pending.id)
             failedStep = .save

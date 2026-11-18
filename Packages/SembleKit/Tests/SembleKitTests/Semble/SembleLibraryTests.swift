@@ -300,8 +300,8 @@ final class SembleLibraryTests: XCTestCase {
     func testSaveWritesANewCollectionBeforeTheCardAndLinksIt() async throws {
         // The new collection's link rkey is looked up by its future URI,
         // computed from the `PendingSave`'s own `did` — which is always the
-        // authenticated repo's did in practice (`SaveQueue` routes a save to
-        // a drain for its own DID), so the fake store is given the same one.
+        // authenticated repo's did (`SembleLibrary` refuses any other), so
+        // the fake store is given the same one.
         let store = FakeRecordStore(did: "did:plc:alice")
         let library = makeLibrary(store: store)
         let recipes = PendingCollection(rkey: "recipes1", name: "Recipes", accessType: .closed, createdAt: fixedDate)
