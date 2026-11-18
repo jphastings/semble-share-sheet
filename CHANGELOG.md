@@ -3,6 +3,17 @@
 Newest first. Entries from 0.2.2 onwards are written by the release
 automation from the files in `.changeset/`; see CONTRIBUTING.md.
 
+## 0.2.5 (2026-11-18)
+
+### Features
+
+- You can now add links to other people's open collections. The collection list shows yours under "Mine" and the open collections you've added to under "Shared", and searching also finds anyone's open collections. The list now fills the sheet and fades at the bottom when there's more to scroll.
+
+### Fixes
+
+- A link saved after your sign-in has expired is no longer stuck on your device: the share sheet now says you need to log in again, and the link is added as soon as you do. If your sign-in expires while the app is open, it now shows the sign-in screen instead of looking signed in.
+- Fixed a rare case where using the share sheet while the app was syncing could sign you out.
+
 ## 0.2.4 (2026-09-22)
 
 ### Features
